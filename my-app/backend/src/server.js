@@ -11,10 +11,9 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-// ✅ CORS FIX (trebuie înainte de routes)
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.CLIENT_ORIGIN, 
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -22,7 +21,7 @@ app.use(
 );
 
 app.get("/health", (req, res) => res.json({ ok: true }));
-
 app.use("/api/auth", authRouter);
 
-app.listen(5000, () => console.log("API on http://localhost:5000"));
+const port = process.env.PORT || 5000; 
+app.listen(port, () => console.log(`API on http://localhost:${port}`));

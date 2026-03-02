@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:5000";
+const API_URL = "https://urbanpulse-tkpu.onrender.com";
 
 export async function api(path, options = {}) {
   const res = await fetch(`${API_URL}${path}`, {
