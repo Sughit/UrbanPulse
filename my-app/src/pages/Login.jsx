@@ -10,7 +10,8 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const onChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+  const onChange = (e) =>
+    setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -27,19 +28,17 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-100 flex items-center justify-center px-4 py-10">
+    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6">
-          <div className="text-sm text-neutral-500">UrbanPulse</div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-neutral-900">
-            Intră în cont
-          </h1>
-          <p className="mt-1 text-sm text-neutral-600">
-            Folosește emailul și parola.
+          <div className="text-xs tracking-widest text-gray-400">URBANPULSE</div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Intră în cont</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            Folosește emailul și parola ca să continui.
           </p>
         </div>
 
-        <div className="bg-white rounded-3xl shadow-sm border border-neutral-200 p-5">
+        <div className="bg-gray-900/60 border border-gray-800 rounded-3xl p-5 shadow-xl">
           <form onSubmit={onSubmit} className="space-y-4">
             <Field
               label="Email"
@@ -61,30 +60,34 @@ export default function Login() {
             />
 
             {err && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <div className="rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200">
                 {err}
               </div>
             )}
 
             <button
               disabled={busy}
-              className="w-full h-12 rounded-2xl bg-neutral-900 text-white font-semibold active:scale-[0.99]
+              className="w-full h-12 rounded-2xl bg-green-500 text-black font-semibold
+                         hover:bg-green-400 active:scale-[0.99]
                          disabled:opacity-60 disabled:active:scale-100"
             >
               {busy ? "Se verifică..." : "Login"}
             </button>
 
-            <div className="text-center text-sm text-neutral-600">
+            <div className="text-center text-sm text-gray-400">
               N-ai cont?{" "}
-              <Link to="/register" className="font-semibold text-neutral-900 underline underline-offset-4">
+              <Link
+                to="/register"
+                className="font-semibold text-green-400 hover:text-green-300"
+              >
                 Creează cont
               </Link>
             </div>
           </form>
         </div>
 
-        <div className="mt-4 text-xs text-neutral-500 text-center">
-          Dacă ai uitat parola, facem după reset (pasul următor).
+        <div className="mt-4 text-xs text-gray-500 text-center">
+          Tip: dacă îți sare logout la refresh, e fix-ul de “/me + credentials”.
         </div>
       </div>
     </div>
@@ -102,11 +105,11 @@ function Field({
 }) {
   return (
     <label className="block">
-      <div className="mb-1.5 text-sm font-medium text-neutral-800">{label}</div>
+      <div className="mb-1.5 text-sm font-medium text-gray-200">{label}</div>
       <input
-        className="w-full h-12 rounded-2xl bg-neutral-50 border border-neutral-200 px-4 text-neutral-900
-                   placeholder:text-neutral-400 outline-none
-                   focus:bg-white focus:border-neutral-400 focus:ring-4 focus:ring-neutral-200/60 transition"
+        className="w-full h-12 rounded-2xl bg-gray-950/60 border border-gray-800 px-4 text-white
+                   placeholder:text-gray-500 outline-none
+                   focus:border-gray-600 focus:ring-4 focus:ring-gray-800/60 transition"
         name={name}
         type={type}
         placeholder={placeholder}

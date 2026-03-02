@@ -1,99 +1,148 @@
 import { Router } from "express";
-import bcrypt from "bcrypt";
-import { z } from "zod";
-import { prisma } from "../prisma.js";
-import { signToken } from "../utils/jwt.js";
-import { requireAuth } from "../middleware/auth.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import prisma from "../prisma.js";
 
 const router = Router();
 
-const registerSchema = z.object({
-  username: z.string().min(3).max(24),
-  email: z.string().email(),
-  password: z.string().min(8).max(72),
-});
+const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+const isProd = process.env.NODE_ENV === "production";
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1).max(72),
-});
+// Cookie config corect pentru local + production
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProd,                       // true în production (HTTPS)
+  sameSite: isProd ? "none" : "lax",    // CRUCIAL pentru cross-domain
+  maxAge: 7 * 24 * 60 * 60 * 1000,      // 7 zile
+  path: "/",
+};
 
-// REGISTER
+function sign(user) {
+  return jwt.sign(
+    { id: user.id, role: user.role },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+/* =========================
+   REGISTER
+========================= */
 router.post("/register", async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    const { username, email, password } = req.body;
 
-  const { username, email, password } = parsed.data;
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: "Missing fields" });
+    }
 
-  const exists = await prisma.user.findFirst({
-    where: { OR: [{ email }, { username }] },
-    select: { id: true },
-  });
-  if (exists) return res.status(409).json({ error: "User already exists" });
+    const exists = await prisma.user.findUnique({ where: { email } });
+    if (exists) {
+      return res.status(400).json({ message: "Email already used" });
+    }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+    const hash = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.create({
-    data: { username, email, passwordHash },
-    select: { id: true, username: true, email: true, role: true },
-  });
-
-  // auto-login după register (opțional)
-  const token = signToken({ sub: user.id, role: user.role });
-
-  res
-    .cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
-    .status(201)
-    .json({ user });
-});
-
-// LOGIN
-router.post("/login", async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-
-  const { email, password } = parsed.data;
-
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
-
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: "Invalid credentials" });
-
-  const token = signToken({ sub: user.id, role: user.role });
-
-  res
-    .cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
-    .json({
-      user: { id: user.id, username: user.username, email: user.email, role: user.role },
+    const user = await prisma.user.create({
+      data: { username, email, password: hash },
     });
+
+    const token = sign(user);
+
+    res
+      .cookie("token", token, cookieOptions)
+      .status(201)
+      .json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+        },
+      });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Register failed" });
+  }
 });
 
-// ME (cine e logat)
-router.get("/me", requireAuth, async (req, res) => {
-  const userId = req.user.sub;
+/* =========================
+   LOGIN
+========================= */
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, username: true, email: true, role: true, createdAt: true },
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const token = sign(user);
+
+    res
+      .cookie("token", token, cookieOptions)
+      .json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+        },
+      });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Login failed" });
+  }
+});
+
+/* =========================
+   ME (pentru refresh)
+========================= */
+router.get("/me", async (req, res) => {
+  try {
+    const token = req.cookies?.token;
+    if (!token) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const payload = jwt.verify(token, JWT_SECRET);
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: { id: true, username: true, email: true, role: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    res.json({ user });
+
+  } catch (err) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+});
+
+/* =========================
+   LOGOUT
+========================= */
+router.post("/logout", (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    path: "/",
   });
 
-  res.json({ user });
-});
-
-// LOGOUT
-router.post("/logout", (req, res) => {
-  res.clearCookie("token").json({ ok: true });
+  res.json({ ok: true });
 });
 
 export default router;
