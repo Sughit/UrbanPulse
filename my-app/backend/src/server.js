@@ -13,12 +13,25 @@ app.use(cookieParser());
 
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN, 
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+
+      const allowed = (process.env.CLIENT_ORIGINS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      if (allowed.includes(origin)) return cb(null, true);
+
+      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+app.options("*", cors());
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRouter);
