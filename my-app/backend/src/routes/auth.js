@@ -8,26 +8,20 @@ const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 const isProd = process.env.NODE_ENV === "production";
 
-// Cookie config corect pentru local + production
 const cookieOptions = {
   httpOnly: true,
-  secure: isProd,                       // true în production (HTTPS)
-  sameSite: isProd ? "none" : "lax",    // CRUCIAL pentru cross-domain
-  maxAge: 7 * 24 * 60 * 60 * 1000,      // 7 zile
+  secure: isProd,                    
+  sameSite: isProd ? "none" : "lax",  
+  maxAge: 7 * 24 * 60 * 60 * 1000,    // 7 zile
   path: "/",
 };
 
 function sign(user) {
-  return jwt.sign(
-    { id: user.id, role: user.role },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  return jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+    expiresIn: "7d",
+  });
 }
 
-/* =========================
-   REGISTER
-========================= */
 router.post("/register", async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -44,12 +38,17 @@ router.post("/register", async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { username, email, password: hash },
+      data: {
+        username,
+        email,
+        password: hash,
+        passwordHash: hash,
+      },
     });
 
     const token = sign(user);
 
-    res
+    return res
       .cookie("token", token, cookieOptions)
       .status(201)
       .json({
@@ -60,52 +59,51 @@ router.post("/register", async (req, res) => {
           role: user.role,
         },
       });
-
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Register failed" });
+    return res.status(500).json({ message: "Register failed" });
   }
 });
 
-/* =========================
-   LOGIN
-========================= */
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Missing fields" });
+    }
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    const hash = user.passwordHash ?? user.password;
+    if (!hash) {
+      return res.status(500).json({ message: "User has no password hash" });
+    }
+
+    const ok = await bcrypt.compare(password, hash);
     if (!ok) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
     const token = sign(user);
 
-    res
-      .cookie("token", token, cookieOptions)
-      .json({
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-        },
-      });
-
+    return res.cookie("token", token, cookieOptions).json({
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      },
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Login failed" });
+    return res.status(500).json({ message: "Login failed" });
   }
 });
 
-/* =========================
-   ME (pentru refresh)
-========================= */
 router.get("/me", async (req, res) => {
   try {
     const token = req.cookies?.token;
@@ -124,16 +122,12 @@ router.get("/me", async (req, res) => {
       return res.status(401).json({ message: "User not found" });
     }
 
-    res.json({ user });
-
+    return res.json({ user });
   } catch (err) {
     return res.status(401).json({ message: "Invalid token" });
   }
 });
 
-/* =========================
-   LOGOUT
-========================= */
 router.post("/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
@@ -142,7 +136,7 @@ router.post("/logout", (req, res) => {
     path: "/",
   });
 
-  res.json({ ok: true });
+  return res.json({ ok: true });
 });
 
 export default router;
