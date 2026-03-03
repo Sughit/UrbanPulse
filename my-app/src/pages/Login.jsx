@@ -85,10 +85,6 @@ export default function Login() {
             </div>
           </form>
         </div>
-
-        <div className="mt-4 text-xs text-gray-500 text-center">
-          Tip: dacă îți sare logout la refresh, e fix-ul de “/me + credentials”.
-        </div>
       </div>
     </div>
   );
