@@ -31,8 +31,6 @@ app.use(
   })
 );
 
-app.options("*", cors());
-
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRouter);
 
