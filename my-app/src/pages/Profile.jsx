@@ -1,42 +1,81 @@
-import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { useEffect, useState } from "react";
+import { auth, db } from "../firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { signOut } from "firebase/auth";
 
 export default function Profile() {
-  const { user, logout } = useAuth();
-  const nav = useNavigate();
+  const [profile, setProfile] = useState(null);
+  const user = auth.currentUser;
 
-  async function onLogout() {
-    await logout();
-    nav("/login");
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user) return;
+
+      const ref = doc(db, "users", user.uid);
+      const snap = await getDoc(ref);
+
+      if (snap.exists()) {
+        setProfile(snap.data());
+      }
+    };
+
+    loadProfile();
+  }, [user]);
+
+  const logout = async () => {
+    await signOut(auth);
+    window.location.href = "/login";
+  };
+
+  if (!user) {
+    return (
+      <div className="p-6 text-center">
+        Nu ești logat.
+      </div>
+    );
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold">Profil</h1>
-      <p className="text-gray-400 mt-2">Setări cont și detalii.</p>
+    <div className="p-6 flex justify-center">
+      <div className="w-full max-w-md bg-white/5 border border-white/10 rounded-2xl p-6">
 
-      <div className="mt-4 max-w-md bg-gray-900/60 border border-gray-800 rounded-3xl p-5">
-        <Row k="Username" v={user?.username || "-"} />
-        <Row k="Email" v={user?.email || "-"} />
-        <Row k="Role" v={user?.role || "user"} />
+        <h1 className="text-2xl font-semibold mb-4">
+          Profil
+        </h1>
+
+        <div className="space-y-3">
+
+          <div>
+            <span className="opacity-70">Username:</span>
+            <div className="font-semibold">
+              {profile?.username || "loading..."}
+            </div>
+          </div>
+
+          <div>
+            <span className="opacity-70">Email:</span>
+            <div className="font-semibold">
+              {user.email}
+            </div>
+          </div>
+
+          <div>
+            <span className="opacity-70">Rol:</span>
+            <div className="font-semibold">
+              {profile?.role || "USER"}
+            </div>
+          </div>
+
+        </div>
 
         <button
-          onClick={onLogout}
-          className="mt-5 w-full h-12 rounded-2xl bg-gray-950/60 border border-gray-800 text-gray-100
-                     hover:border-gray-600 hover:text-white transition"
+          onClick={logout}
+          className="mt-6 w-full p-3 rounded-xl bg-red-500 text-white font-semibold"
         >
           Logout
         </button>
-      </div>
-    </div>
-  );
-}
 
-function Row({ k, v }) {
-  return (
-    <div className="flex items-center justify-between py-2 border-b border-gray-800 last:border-b-0">
-      <div className="text-sm text-gray-400">{k}</div>
-      <div className="text-sm font-semibold">{v}</div>
+      </div>
     </div>
   );
 }

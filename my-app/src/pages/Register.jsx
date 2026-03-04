@@ -1,130 +1,110 @@
+// src/pages/Register.jsx
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { useNavigate, Link } from "react-router-dom";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
 export default function Register() {
-  const { register } = useAuth();
   const nav = useNavigate();
-
-  const [form, setForm] = useState({ username: "", email: "", password: "" });
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [pass2, setPass2] = useState("");
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  const onChange = (e) =>
-    setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
-
-  async function onSubmit(e) {
+  const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
-    setBusy(true);
+
+    const u = username.trim();
+    const em = email.trim();
+
+    if (!u) return setErr("Scrie un username.");
+    if (!em) return setErr("Scrie un email.");
+    if (pass.length < 6) return setErr("Parola trebuie să aibă minim 6 caractere.");
+    if (pass !== pass2) return setErr("Parolele nu coincid.");
+
     try {
-      await register(form);
-      nav("/profile");
-    } catch (e) {
-      setErr(e.message);
+      setLoading(true);
+
+      const cred = await createUserWithEmailAndPassword(auth, em, pass);
+
+      await updateProfile(cred.user, { displayName: u });
+
+      await setDoc(doc(db, "users", cred.user.uid), {
+        username: u,
+        email: em,
+        role: "USER",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      nav("/"); 
+    } catch (e2) {
+      const code = e2?.code || "";
+      if (code.includes("email-already-in-use")) setErr("Emailul este deja folosit.");
+      else if (code.includes("invalid-email")) setErr("Email invalid.");
+      else if (code.includes("weak-password")) setErr("Parolă prea slabă.");
+      else setErr("Eroare la înregistrare. Încearcă din nou.");
+      console.error(e2);
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md">
-        <div className="mb-6">
-          <div className="text-xs tracking-widest text-gray-400">URBANPULSE</div>
-          <h1 className="text-3xl font-extrabold tracking-tight">Creează cont</h1>
-          <p className="mt-1 text-sm text-gray-400">
-            Îți ia 30 secunde și intri în aplicație.
-          </p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <form onSubmit={onSubmit} className="w-full max-w-md bg-white/5 border border-white/10 rounded-2xl p-6">
+        <h1 className="text-2xl font-semibold mb-4">Creează cont</h1>
 
-        <div className="bg-gray-900/60 border border-gray-800 rounded-3xl p-5 shadow-xl">
-          <form onSubmit={onSubmit} className="space-y-4">
-            <Field
-              label="Username"
-              name="username"
-              placeholder="ex: robert123"
-              value={form.username}
-              onChange={onChange}
-              autoComplete="username"
-            />
-            <Field
-              label="Email"
-              name="email"
-              type="email"
-              placeholder="ex: robert@gmail.com"
-              value={form.email}
-              onChange={onChange}
-              autoComplete="email"
-            />
-            <Field
-              label="Parolă"
-              name="password"
-              type="password"
-              placeholder="minim 8 caractere"
-              value={form.password}
-              onChange={onChange}
-              autoComplete="new-password"
-            />
+        {err && <div className="mb-3 text-sm text-red-300">{err}</div>}
 
-            {err && (
-              <div className="rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-                {err}
-              </div>
-            )}
+        <label className="block text-sm mb-1">Username</label>
+        <input
+          className="w-full mb-3 p-3 rounded-xl bg-black/20 border border-white/10"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="ex: Robert"
+        />
 
-            <button
-              disabled={busy}
-              className="w-full h-12 rounded-2xl bg-green-500 text-black font-semibold
-                         hover:bg-green-400 active:scale-[0.99]
-                         disabled:opacity-60 disabled:active:scale-100"
-            >
-              {busy ? "Se creează..." : "Creează cont"}
-            </button>
+        <label className="block text-sm mb-1">Email</label>
+        <input
+          className="w-full mb-3 p-3 rounded-xl bg-black/20 border border-white/10"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="ex: robert@email.com"
+        />
 
-            <div className="text-center text-sm text-gray-400">
-              Ai deja cont?{" "}
-              <Link
-                to="/login"
-                className="font-semibold text-green-400 hover:text-green-300"
-              >
-                Login
-              </Link>
-            </div>
-          </form>
-        </div>
+        <label className="block text-sm mb-1">Parolă</label>
+        <input
+          type="password"
+          className="w-full mb-3 p-3 rounded-xl bg-black/20 border border-white/10"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          placeholder="minim 6 caractere"
+        />
 
-        <div className="mt-4 text-xs text-gray-500 text-center">
-          Prin crearea contului accepți regulile aplicației.
-        </div>
-      </div>
+        <label className="block text-sm mb-1">Confirmă parola</label>
+        <input
+          type="password"
+          className="w-full mb-4 p-3 rounded-xl bg-black/20 border border-white/10"
+          value={pass2}
+          onChange={(e) => setPass2(e.target.value)}
+        />
+
+        <button
+          disabled={loading}
+          className="w-full p-3 rounded-xl bg-white text-black font-semibold disabled:opacity-60"
+        >
+          {loading ? "Se creează..." : "Register"}
+        </button>
+
+        <p className="text-sm mt-4 opacity-80">
+          Ai deja cont? <Link to="/login" className="underline">Login</Link>
+        </p>
+      </form>
     </div>
-  );
-}
-
-function Field({
-  label,
-  name,
-  type = "text",
-  placeholder,
-  value,
-  onChange,
-  autoComplete,
-}) {
-  return (
-    <label className="block">
-      <div className="mb-1.5 text-sm font-medium text-gray-200">{label}</div>
-      <input
-        className="w-full h-12 rounded-2xl bg-gray-950/60 border border-gray-800 px-4 text-white
-                   placeholder:text-gray-500 outline-none
-                   focus:border-gray-600 focus:ring-4 focus:ring-gray-800/60 transition"
-        name={name}
-        type={type}
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange}
-        autoComplete={autoComplete}
-      />
-    </label>
   );
 }
