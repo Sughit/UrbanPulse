@@ -3,11 +3,11 @@ import { Home, Map, PlusCircle, Bell, User } from "lucide-react";
 
 export default function Navbar() {
   const base = "flex flex-col items-center justify-center text-[11px] gap-1";
-  const active = "text-green-400";
+  const active = "text-yellow-400";
   const inactive = "text-gray-400";
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 h-16 bg-gray-900 border-t border-gray-800">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 h-16 bg-zinc-950 border-t border-gray-800">
       <div className="mx-auto h-full max-w-md flex items-center justify-around">
         <NavLink
           to="/"
@@ -26,7 +26,7 @@ export default function Navbar() {
         </NavLink>
 
         <NavLink to="/create" className="flex flex-col items-center -mt-6">
-          <div className="rounded-full bg-green-500 p-3 shadow-lg">
+          <div className="rounded-full bg-yellow-500 p-3 shadow-lg">
             <PlusCircle size={24} className="text-black" />
           </div>
           <span className="text-[10px] text-gray-300 mt-1">Crează</span>
