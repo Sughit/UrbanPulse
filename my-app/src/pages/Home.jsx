@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { ensureSafetyCheckin } from "../services/pulses";
+import { fetchWeatherAlerts } from "../utils/weather";  
+import { makeEventKeyFromAlert, hasCheckedIn, safetyCheckIn } from "../utils/safety";
+import { getOrCreateThread } from "../utils/messages";
+import { useNavigate } from "react-router-dom";
 import {
   collection,
   doc,
@@ -53,7 +58,13 @@ export default function Home() {
   const [myPos, setMyPos] = useState(null);
   const [myConfirmations, setMyConfirmations] = useState(new Set());
 
+  const [severeAlert, setSevereAlert] = useState(null);
+  const [safetyHidden, setSafetyHidden] = useState(false);
+  const [checking, setChecking] = useState(false);
+
   const radiusMeters = profile?.radiusMeters ?? 500;
+
+  const nav = useNavigate();
 
   const TYPE_LABEL = {
     Emergecy: "Emergency",
@@ -65,6 +76,20 @@ export default function Home() {
     Emergency: "Urgență",
     Skill: "Abilitate",
     Item: "Obiect",
+  }
+
+  async function onSafetyCheckin() {
+    if (!uid || !severeAlert) return;
+    setChecking(true);
+    try {
+      const eventKey = makeEventKeyFromAlert(severeAlert);
+      await safetyCheckIn(eventKey, uid);
+      setSafetyHidden(true); 
+    } catch (e) {
+      alert(e?.message || "Nu am putut salva Safety Check-in.");
+    } finally {
+      setChecking(false);
+    }
   }
 
   useEffect(() => {
@@ -124,6 +149,60 @@ export default function Home() {
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
+
+  useEffect(() => {
+    if (!myPos) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { severe } = await fetchWeatherAlerts(myPos.lat, myPos.lng);
+        if (cancelled) return;
+
+        if (severe) {
+          await ensureSafetyCheckin({
+            location: myPos,
+            severeTitle: severe,
+          });
+        }
+      } catch (e) {
+        console.warn("Weather alerts failed:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [myPos]);
+
+  useEffect(() => {
+    if (!myPos) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { severeAlert } = await fetchWeatherAlerts(myPos.lat, myPos.lng);
+        if (cancelled) return;
+
+        setSevereAlert(severeAlert);
+        setSafetyHidden(false);
+
+        if (severeAlert && uid) {
+          const eventKey = makeEventKeyFromAlert(severeAlert);
+          const already = await hasCheckedIn(eventKey, uid);
+          if (!cancelled && already) setSafetyHidden(true);
+        }
+      } catch (e) {
+        console.warn("Weather alerts failed:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [myPos, uid]);
 
   useEffect(() => {
     setLoading(true);
@@ -191,6 +270,30 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {severeAlert && !safetyHidden ? (
+          <div className="mt-4 rounded-3xl border border-blue-500/30 bg-blue-500/10 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold text-blue-200">
+                  Alertă meteo: {severeAlert.event || "Severe Weather"}
+                </div>
+                <div className="mt-1 text-sm text-zinc-200">
+                  Apasă "Sunt OK" ca să apari în Safety Check-up pentru acest eveniment.
+                </div>
+              </div>
+
+              <button
+                onClick={onSafetyCheckin}
+                disabled={!uid || checking}
+                className="shrink-0 rounded-2xl bg-yellow-400 px-4 py-2 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300 disabled:opacity-50"
+                title={!uid ? "Trebuie să fii conectat" : "Confirmă Safety Check-in"}
+              >
+                {checking ? "Se salvează..." : "Sunt OK"}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Feed */}
         <div className="mt-5">
@@ -268,7 +371,17 @@ export default function Home() {
                           ) : null}
                         </div>
                       </div>
-
+                      {uid && p.createdBy && p.createdBy !== uid ? (
+                        <button
+                          onClick={async () => {
+                            const tid = await getOrCreateThread(uid, p.createdBy);
+                            nav(`/notifications?tab=chat&thread=${tid}`);
+                          }}
+                          className="shrink-0 rounded-2xl border border-zinc-800 bg-zinc-950/30 px-4 py-2 text-sm font-extrabold text-zinc-200 hover:bg-zinc-900/70"
+                        >
+                          Mesaj
+                        </button>
+                      ) : null}
                       <button
                         onClick={() => handleConfirm(p.id)}
                         disabled={!uid || confirmed}

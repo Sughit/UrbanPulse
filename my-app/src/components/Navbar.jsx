@@ -37,7 +37,7 @@ export default function Navbar() {
           className={({ isActive }) => `${base} ${isActive ? active : inactive}`}
         >
           <Bell size={20} />
-          Alerte
+          Notificări
         </NavLink>
 
         <NavLink
