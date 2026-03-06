@@ -26,6 +26,23 @@ function alertHeading(kind) {
   return "Alertă";
 }
 
+function ArrowLeftIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className="h-5 w-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
+
 export default function Notifications() {
   const nav = useNavigate();
   const qp = useQueryParams();
@@ -40,7 +57,10 @@ export default function Notifications() {
   const [msgs, setMsgs] = useState([]);
 
   const [typing, setTyping] = useState("");
+  const [sending, setSending] = useState(false);
   const [userLabels, setUserLabels] = useState({});
+
+  const isChatDetail = tab === "chat" && !!threadId;
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -74,12 +94,19 @@ export default function Notifications() {
 
     const q2 = query(
       collection(db, "threads"),
-      where("participants", "array-contains", uid),
-      orderBy("updatedAt", "desc")
+      where("participants", "array-contains", uid)
     );
 
     const unsub = onSnapshot(q2, (snap) => {
-      setThreads(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      items.sort((a, b) => {
+        const ta = a.updatedAt?.seconds || 0;
+        const tb = b.updatedAt?.seconds || 0;
+        return tb - ta;
+      });
+
+      setThreads(items);
     });
 
     return () => unsub();
@@ -142,6 +169,24 @@ export default function Notifications() {
     });
   }
 
+  async function handleSendMessage() {
+    const text = typing.trim();
+    if (!threadId || !uid || !text || sending) return;
+
+    const sentText = text;
+    setTyping("");
+    setSending(true);
+
+    try {
+      await sendMessage(threadId, uid, sentText);
+    } catch (e) {
+      setTyping(sentText);
+      alert(e?.message || "Nu am putut trimite mesajul.");
+    } finally {
+      setSending(false);
+    }
+  }
+
   if (!uid) {
     return (
       <div className="min-h-[calc(100vh-64px)] w-full bg-zinc-950 text-zinc-100">
@@ -161,204 +206,226 @@ export default function Notifications() {
   return (
     <div className="min-h-[calc(100vh-64px)] w-full bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-3xl px-4 py-5 pb-28">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="mt-1 text-2xl font-extrabold">Notificări</h1>
-            <div className="mt-1 text-sm text-zinc-400">
-              Alerte din sistem + conversații cu vecinii.
-            </div>
-          </div>
-        </div>
-
-        {tab === "alerts" ? (
-          <div className="mt-5 space-y-3">
-            {alerts.length === 0 ? (
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-400">
-                Nicio alertă încă.
-              </div>
-            ) : (
-              alerts.map((a) => (
-                <div
-                  key={a.id}
-                  className={`rounded-3xl border border-zinc-800 bg-zinc-900/60 p-4 ${
-                    a.read ? "opacity-70" : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-extrabold">
-                        {alertHeading(a.kind)}
-                      </div>
-
-                      <div className="mt-1 text-sm text-zinc-300">
-                        {a.title ? `"${a.title}"` : "—"}
-                      </div>
-
-                      {a.text ? (
-                        <div className="mt-2 text-sm text-zinc-400">{a.text}</div>
-                      ) : null}
-
-                      {a.byUid ? (
-                        <div className="mt-2 text-xs text-zinc-500">
-                          De la: {userLabels[a.byUid] || a.byUid}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-2 text-xs text-zinc-500">
-                        {a.read ? "Citit" : "Necitit"}
-                      </div>
-                    </div>
-
-                    {!a.read ? (
-                      <button
-                        onClick={() => markRead(a.id)}
-                        className="shrink-0 rounded-2xl bg-yellow-400 px-4 py-2 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300"
-                      >
-                        Marchează citit
-                      </button>
-                    ) : null}
-                  </div>
+        {!isChatDetail ? (
+          <>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h1 className="mt-1 text-2xl font-extrabold">Notificări</h1>
+                <div className="mt-1 text-sm text-zinc-400">
+                  Alerte din sistem + conversații cu vecinii.
                 </div>
-              ))
-            )}
-          </div>
-        ) : (
-          <div className="mt-5">
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/50 p-3">
-              <div className="px-2 text-sm font-extrabold text-zinc-200">
-                Conversații
               </div>
+            </div>
 
-              <div className="mt-2 space-y-2">
-                {threads.length === 0 ? (
-                  <div className="px-2 py-3 text-sm text-zinc-400">
-                    Nicio conversație încă. Apasă „Mesaj” pe o postare.
+            {tab === "alerts" ? (
+              <div className="mt-5 space-y-3">
+                {alerts.length === 0 ? (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-400">
+                    Nicio alertă încă.
                   </div>
                 ) : (
-                  threads.map((t) => {
-                    const other = t.participants?.find((p) => p !== uid) || "";
-                    const otherText = userLabels[other] || other || "—";
+                  alerts.map((a) => (
+                    <div
+                      key={a.id}
+                      className={`rounded-3xl border border-zinc-800 bg-zinc-900/60 p-4 ${
+                        a.read ? "opacity-70" : ""
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold">
+                            {alertHeading(a.kind)}
+                          </div>
 
-                    return (
-                      <button
-                        key={t.id}
-                        onClick={() => setThreadId(t.id)}
-                        className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                          t.id === threadId
-                            ? "border-yellow-400 bg-yellow-400/10"
-                            : "border-zinc-800 bg-zinc-950/30 hover:bg-zinc-900/60"
-                        }`}
-                      >
-                        <div className="text-sm font-extrabold">
-                          Cu: {otherText}
+                          <div className="mt-1 text-sm text-zinc-300">
+                            {a.title ? `"${a.title}"` : "—"}
+                          </div>
+
+                          {a.text ? (
+                            <div className="mt-2 text-sm text-zinc-400">
+                              {a.text}
+                            </div>
+                          ) : null}
+
+                          {a.byUid ? (
+                            <div className="mt-2 text-xs text-zinc-500">
+                              De la: {userLabels[a.byUid] || a.byUid}
+                            </div>
+                          ) : null}
+
+                          <div className="mt-2 text-xs text-zinc-500">
+                            {a.read ? "Citit" : "Necitit"}
+                          </div>
                         </div>
-                        <div className="mt-1 text-xs text-zinc-400">
-                          {t.lastMessage || "—"}
-                        </div>
-                      </button>
-                    );
-                  })
+
+                        {!a.read ? (
+                          <button
+                            onClick={() => markRead(a.id)}
+                            className="shrink-0 rounded-2xl bg-yellow-400 px-4 py-2 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300"
+                          >
+                            Marchează citit
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))
                 )}
+              </div>
+            ) : (
+              <div className="mt-5">
+                <div className="rounded-3xl border border-zinc-800 bg-zinc-900/50 p-3">
+                  <div className="px-2 text-sm font-extrabold text-zinc-200">
+                    Conversații
+                  </div>
+
+                  <div className="mt-2 space-y-2">
+                    {threads.length === 0 ? (
+                      <div className="px-2 py-3 text-sm text-zinc-400">
+                        Nicio conversație încă. Apasă „Mesaj” pe o postare.
+                      </div>
+                    ) : (
+                      threads.map((t) => {
+                        const other = t.participants?.find((p) => p !== uid) || "";
+                        const otherText = userLabels[other] || other || "—";
+
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              setThreadId(t.id);
+                              setTab("chat");
+                            }}
+                            className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/30 px-3 py-3 text-left transition hover:bg-zinc-900/60"
+                          >
+                            <div className="text-sm font-extrabold">
+                              Cu: {otherText}
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-400">
+                              {t.lastMessage || "—"}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="flex min-h-[70vh] flex-col">
+            <div className="sticky top-0 z-20 -mx-1 mb-3 border-b border-zinc-800 bg-zinc-950/95 px-1 pb-3 pt-1 backdrop-blur">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setThreadId("");
+                    setTab("chat");
+                  }}
+                  className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-2 text-zinc-200 hover:bg-zinc-800"
+                  aria-label="Înapoi"
+                  title="Înapoi"
+                >
+                  <ArrowLeftIcon />
+                </button>
+
+                <div className="min-w-0">
+                  <div className="text-lg font-extrabold">Chat</div>
+                  <div className="truncate text-sm text-zinc-400">
+                    {otherLabel || "Conversație"}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="mt-4 rounded-3xl border border-zinc-800 bg-zinc-900/60 p-4">
-              {!threadId ? (
-                <div className="text-sm text-zinc-400">
-                  Selectează o conversație din listă.
+            <div className="flex-1 space-y-2 overflow-auto pr-1">
+              {msgs.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-400">
+                  Niciun mesaj încă.
                 </div>
               ) : (
-                <>
-                  <div className="text-sm font-extrabold">
-                    Chat
-                    {otherLabel ? (
-                      <span className="ml-2 text-xs font-bold text-zinc-400">
-                        ({otherLabel})
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-3 max-h-[40vh] space-y-2 overflow-auto pr-1">
-                    {msgs.length === 0 ? (
-                      <div className="text-sm text-zinc-400">
-                        Niciun mesaj încă.
-                      </div>
-                    ) : (
-                      msgs.map((m) => (
-                        <div
-                          key={m.id}
-                          className={`flex w-full ${
-                            m.from === uid ? "justify-end" : "justify-start"
-                          }`}
-                        >
-                          <div
-                            className={`max-w-[80%] rounded-2xl border px-3 py-2 text-sm ${
-                              m.from === uid
-                                ? "border-yellow-400/30 bg-yellow-400/15 text-zinc-100"
-                                : "border-zinc-800 bg-zinc-950/30 text-zinc-200"
-                            }`}
-                          >
-                            {m.text}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      value={typing}
-                      onChange={(e) => setTyping(e.target.value)}
-                      placeholder="Scrie un mesaj..."
-                      className="flex-1 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-3 text-zinc-100 outline-none focus:border-yellow-400"
-                    />
-                    <button
-                      onClick={async () => {
-                        await sendMessage(threadId, uid, typing);
-                        setTyping("");
-                      }}
-                      className="rounded-2xl bg-yellow-400 px-4 py-3 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300"
+                msgs.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex w-full ${
+                      m.from === uid ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-2xl border px-3 py-2 text-sm ${
+                        m.from === uid
+                          ? "border-yellow-400/30 bg-yellow-400/15 text-zinc-100"
+                          : "border-zinc-800 bg-zinc-950/30 text-zinc-200"
+                      }`}
                     >
-                      Trimite
-                    </button>
+                      {m.text}
+                    </div>
                   </div>
-                </>
+                ))
               )}
+            </div>
+
+            <div className="sticky bottom-16 mt-4 border-t border-zinc-800 bg-zinc-950/95 pt-3 backdrop-blur">
+              <div className="flex items-center gap-2">
+                <input
+                  value={typing}
+                  onChange={(e) => setTyping(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="Scrie un mesaj..."
+                  className="flex-1 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-3 text-zinc-100 outline-none focus:border-yellow-400"
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!typing.trim() || sending}
+                  className="rounded-2xl bg-yellow-400 px-4 py-3 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300 disabled:opacity-50"
+                >
+                  {sending ? "..." : "Trimite"}
+                </button>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      <div className="fixed bottom-16 left-0 right-0 z-40 px-3">
-        <div className="mx-auto max-w-3xl rounded-3xl border border-zinc-800 bg-zinc-950/80 p-2 backdrop-blur">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setTab("chat")}
-              className={`w-full rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
-                tab === "chat"
-                  ? "bg-yellow-400 text-zinc-950"
-                  : "border border-zinc-800 bg-zinc-950/30 text-zinc-200 hover:bg-zinc-900/70"
-              }`}
-            >
-              Conversații
-            </button>
+      {!isChatDetail ? (
+        <div className="fixed bottom-16 left-0 right-0 z-40 px-3">
+          <div className="mx-auto max-w-3xl rounded-3xl border border-zinc-800 bg-zinc-950/80 p-2 backdrop-blur">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setTab("chat");
+                  setThreadId("");
+                }}
+                className={`w-full rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
+                  tab === "chat"
+                    ? "bg-yellow-400 text-zinc-950"
+                    : "border border-zinc-800 bg-zinc-950/30 text-zinc-200 hover:bg-zinc-900/70"
+                }`}
+              >
+                Conversații
+              </button>
 
-            <button
-              onClick={() => {
-                setTab("alerts");
-                setThreadId("");
-              }}
-              className={`w-full rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
-                tab === "alerts"
-                  ? "bg-yellow-400 text-zinc-950"
-                  : "border border-zinc-800 bg-zinc-950/30 text-zinc-200 hover:bg-zinc-900/70"
-              }`}
-            >
-              Alerte
-            </button>
+              <button
+                onClick={() => {
+                  setTab("alerts");
+                  setThreadId("");
+                }}
+                className={`w-full rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
+                  tab === "alerts"
+                    ? "bg-yellow-400 text-zinc-950"
+                    : "border border-zinc-800 bg-zinc-950/30 text-zinc-200 hover:bg-zinc-900/70"
+                }`}
+              >
+                Alerte
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
