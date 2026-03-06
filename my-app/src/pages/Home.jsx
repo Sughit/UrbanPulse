@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { ensureSafetyCheckin } from "../services/pulses";
-import { fetchWeatherAlerts } from "../utils/weather";  
-import { makeEventKeyFromAlert, hasCheckedIn, safetyCheckIn } from "../utils/safety";
-import { getOrCreateThread } from "../utils/messages";
 import { useNavigate } from "react-router-dom";
 import {
   collection,
@@ -12,30 +8,24 @@ import {
   onSnapshot,
   orderBy,
   query,
-  updateDoc,
-  increment,
-  serverTimestamp,
-  setDoc,
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
-
-function toRad(x) {
-  return (x * Math.PI) / 180;
-}
-function distanceMeters(a, b) {
-  if (!a || !b) return Number.POSITIVE_INFINITY;
-  const R = 6371000;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-  return R * c;
-}
+import {
+  confirmPulse,
+  ensureSafetyCheckin,
+} from "../services/pulses";
+import { fetchWeatherAlerts } from "../utils/weather";
+import {
+  makeEventKeyFromAlert,
+  hasCheckedIn,
+  safetyCheckIn,
+} from "../utils/safety";
+import { getOrCreateThread } from "../utils/messages";
+import {
+  distanceMeters,
+  resolveAnchorLabel,
+  resolveAnchorPosition,
+} from "../utils/geo";
 
 function urgencyLabel(u) {
   if (u === 3) return "URGENT";
@@ -55,7 +45,7 @@ export default function Home() {
 
   const [loading, setLoading] = useState(true);
   const [pulses, setPulses] = useState([]);
-  const [myPos, setMyPos] = useState(null);
+  const [livePos, setLivePos] = useState(null);
   const [myConfirmations, setMyConfirmations] = useState(new Set());
 
   const [severeAlert, setSevereAlert] = useState(null);
@@ -63,28 +53,25 @@ export default function Home() {
   const [checking, setChecking] = useState(false);
 
   const radiusMeters = profile?.radiusMeters ?? 500;
+  const anchorPos = resolveAnchorPosition(livePos, profile?.home || null);
+  const anchorLabel = resolveAnchorLabel(livePos, profile?.home || null);
 
   const nav = useNavigate();
-
-  const TYPE_LABEL = {
-    Emergecy: "Emergency",
-    Skill: "Skill",
-    Item: "Item",
-  }
 
   const TYPE_LABEL_BTN = {
     Emergency: "Urgență",
     Skill: "Abilitate",
     Item: "Obiect",
-  }
+  };
 
   async function onSafetyCheckin() {
     if (!uid || !severeAlert) return;
+
     setChecking(true);
     try {
       const eventKey = makeEventKeyFromAlert(severeAlert);
       await safetyCheckIn(eventKey, uid);
-      setSafetyHidden(true); 
+      setSafetyHidden(true);
     } catch (e) {
       alert(e?.message || "Nu am putut salva Safety Check-in.");
     } finally {
@@ -97,7 +84,11 @@ export default function Home() {
       setMyConfirmations(new Set());
       return;
     }
-    if (pulses.length === 0) return;
+
+    if (pulses.length === 0) {
+      setMyConfirmations(new Set());
+      return;
+    }
 
     let cancelled = false;
 
@@ -112,9 +103,7 @@ export default function Home() {
         );
 
         if (cancelled) return;
-
-        const confirmedIds = new Set(checks.filter(Boolean));
-        setMyConfirmations(confirmedIds);
+        setMyConfirmations(new Set(checks.filter(Boolean)));
       } catch (e) {
         console.error("Failed to load confirmations:", e);
       }
@@ -138,32 +127,43 @@ export default function Home() {
       const snap = await getDoc(pRef);
       setProfile(snap.exists() ? snap.data() : null);
     });
+
     return () => unsub();
   }, []);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => {
+        setLivePos({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+      },
       () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
 
   useEffect(() => {
-    if (!myPos) return;
+    if (!anchorPos) return;
 
     let cancelled = false;
 
     (async () => {
       try {
-        const { severe } = await fetchWeatherAlerts(myPos.lat, myPos.lng);
+        const { severeAlert } = await fetchWeatherAlerts(
+          anchorPos.lat,
+          anchorPos.lng
+        );
+
         if (cancelled) return;
 
-        if (severe) {
+        if (severeAlert) {
           await ensureSafetyCheckin({
-            location: myPos,
-            severeTitle: severe,
+            location: anchorPos,
+            severeTitle: severeAlert.event || "Severe Weather",
           });
         }
       } catch (e) {
@@ -174,16 +174,20 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [myPos]);
+  }, [anchorPos]);
 
   useEffect(() => {
-    if (!myPos) return;
+    if (!anchorPos) return;
 
     let cancelled = false;
 
     (async () => {
       try {
-        const { severeAlert } = await fetchWeatherAlerts(myPos.lat, myPos.lng);
+        const { severeAlert } = await fetchWeatherAlerts(
+          anchorPos.lat,
+          anchorPos.lng
+        );
+
         if (cancelled) return;
 
         setSevereAlert(severeAlert);
@@ -202,15 +206,17 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [myPos, uid]);
+  }, [anchorPos, uid]);
 
   useEffect(() => {
     setLoading(true);
+
     const q = query(
       collection(db, "pulses"),
       orderBy("pinned", "desc"),
       orderBy("createdAt", "desc")
     );
+
     const unsub = onSnapshot(
       q,
       (snap) => {
@@ -220,28 +226,22 @@ export default function Home() {
       },
       () => setLoading(false)
     );
+
     return () => unsub();
   }, []);
 
   const filtered = useMemo(() => {
-    if (!myPos) return pulses;
-    return pulses.filter((p) => distanceMeters(myPos, p.location) <= radiusMeters);
-  }, [pulses, myPos, radiusMeters]);
+    if (!anchorPos) return pulses;
+    return pulses.filter(
+      (p) => distanceMeters(anchorPos, p.location) <= radiusMeters
+    );
+  }, [pulses, anchorPos, radiusMeters]);
 
   async function handleConfirm(pulseId) {
     if (!uid) return;
 
     try {
-      const cRef = doc(db, "pulses", pulseId, "confirmations", uid);
-
-      await setDoc(cRef, { createdAt: serverTimestamp() }, { merge: false });
-
-      const pRef = doc(db, "pulses", pulseId);
-      await updateDoc(pRef, {
-        confirmationsCount: increment(1),
-        updatedAt: serverTimestamp(),
-      });
-
+      await confirmPulse(pulseId, uid);
       setMyConfirmations((prev) => new Set(prev).add(pulseId));
     } catch (e) {
       console.error("Confirmarea a eșuat:", e);
@@ -266,7 +266,7 @@ export default function Home() {
               {radiusMeters}m
             </div>
             <div className="mt-1 text-[11px] text-zinc-500">
-              {myPos ? "Geolocația PORNITĂ" : "Geolocația OPRITĂ"}
+              {anchorLabel}
             </div>
           </div>
         </div>
@@ -279,7 +279,8 @@ export default function Home() {
                   Alertă meteo: {severeAlert.event || "Severe Weather"}
                 </div>
                 <div className="mt-1 text-sm text-zinc-200">
-                  Apasă "Sunt OK" ca să apari în Safety Check-up pentru acest eveniment.
+                  Apasă „Sunt OK” ca să apari în Safety Check-in pentru acest
+                  eveniment.
                 </div>
               </div>
 
@@ -295,7 +296,16 @@ export default function Home() {
           </div>
         ) : null}
 
-        {/* Feed */}
+        <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-400">
+          Feed-ul este filtrat după:{" "}
+          <span className="font-bold text-zinc-200">{anchorLabel}</span>
+          {anchorPos ? (
+            <span className="ml-2 text-zinc-500">
+              ({anchorPos.lat.toFixed(5)}, {anchorPos.lng.toFixed(5)})
+            </span>
+          ) : null}
+        </div>
+
         <div className="mt-5">
           {loading ? (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-400">
@@ -303,12 +313,13 @@ export default function Home() {
             </div>
           ) : filtered.length === 0 ? (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-400">
-              Nicio postarea în zona ta.
+              Nicio postare în zona ta.
             </div>
           ) : (
             <div className="space-y-3">
               {filtered.map((p) => {
                 const confirmed = myConfirmations.has(p.id);
+
                 return (
                   <div
                     key={p.id}
@@ -320,6 +331,12 @@ export default function Home() {
                           {p.pinned ? (
                             <span className="rounded-full border border-blue-500/30 bg-blue-500/15 px-3 py-1 text-xs font-bold text-blue-200">
                               FIXAT
+                            </span>
+                          ) : null}
+
+                          {p.systemTag === "safety-checkin" ? (
+                            <span className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/15 px-3 py-1 text-xs font-bold text-fuchsia-200">
+                              SYSTEM
                             </span>
                           ) : null}
 
@@ -348,61 +365,60 @@ export default function Home() {
 
                         <p className="mt-1 text-sm text-zinc-300">{p.text}</p>
 
-                        <div className="w-max mt-3 grid grid-flow-col items-center gap-2 text-xs text-zinc-500">
+                        <div className="mt-3 grid w-max grid-flow-col items-center gap-2 text-xs text-zinc-500">
                           <span>
                             Status:{" "}
                             <span className="font-semibold text-zinc-300">
                               {p.status}
                             </span>
                           </span>
+
                           <span>
                             Confirmări:{" "}
                             <span className="font-semibold text-zinc-300">
                               {p.confirmationsCount ?? 0}
                             </span>
                           </span>
-                          {myPos && p.location ? (
+
+                          {anchorPos && p.location ? (
                             <span>
                               Distanța:{" "}
                               <span className="font-semibold text-zinc-300">
-                                {Math.round(distanceMeters(myPos, p.location))}m
+                                {Math.round(distanceMeters(anchorPos, p.location))}
+                                m
                               </span>
                             </span>
                           ) : null}
                         </div>
                       </div>
-                      {uid && p.createdBy && p.createdBy !== uid ? (
+
+                      <div className="flex shrink-0 gap-2">
+                        {uid && p.createdBy && p.createdBy !== uid ? (
+                          <button
+                            onClick={async () => {
+                              const tid = await getOrCreateThread(uid, p.createdBy);
+                              nav(`/notifications?tab=chat&thread=${tid}`);
+                            }}
+                            className="rounded-2xl border border-zinc-800 bg-zinc-950/30 px-4 py-2 text-sm font-extrabold text-zinc-200 hover:bg-zinc-900/70"
+                          >
+                            Mesaj
+                          </button>
+                        ) : null}
+
                         <button
-                          onClick={async () => {
-                            const tid = await getOrCreateThread(uid, p.createdBy);
-                            nav(`/notifications?tab=chat&thread=${tid}`);
-                          }}
-                          className="shrink-0 rounded-2xl border border-zinc-800 bg-zinc-950/30 px-4 py-2 text-sm font-extrabold text-zinc-200 hover:bg-zinc-900/70"
-                        >
-                          Mesaj
-                        </button>
-                      ) : null}
-                      <button
-                        onClick={() => handleConfirm(p.id)}
-                        disabled={!uid || confirmed}
-                        className={`shrink-0 rounded-2xl px-4 py-2 text-sm font-extrabold transition
-                          ${
+                          onClick={() => handleConfirm(p.id)}
+                          disabled={!uid || confirmed}
+                          className={`rounded-2xl px-4 py-2 text-sm font-extrabold transition ${
                             confirmed
                               ? "border border-zinc-700 bg-zinc-800/60 text-zinc-400"
                               : "bg-yellow-400 text-zinc-950 hover:bg-yellow-300"
-                          }
-                          ${!uid ? "opacity-50" : ""}`}
-                        title={!uid ? "Necesită conectare" : "Aprobi"}
-                      >
-                        {confirmed ? "Aprobat" : "Aprobează"}
-                      </button>
-                    </div>
-
-                    {/* {p.location?.lat && p.location?.lng ? (
-                      <div className="mt-3 text-[11px] text-zinc-600">
-                        {p.location.lat.toFixed(5)}, {p.location.lng.toFixed(5)}
+                          } ${!uid ? "opacity-50" : ""}`}
+                          title={!uid ? "Necesită conectare" : "Aprobă"}
+                        >
+                          {confirmed ? "Aprobat" : "Aprobă"}
+                        </button>
                       </div>
-                    ) : null} */}
+                    </div>
                   </div>
                 );
               })}

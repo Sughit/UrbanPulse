@@ -1,27 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
+import { MapContainer, TileLayer, Circle, CircleMarker, Popup } from "react-leaflet";
 import { auth, db } from "../firebase";
 import { subscribeToPulses } from "../services/pulses";
-
-import { MapContainer, TileLayer, Circle, CircleMarker, Popup } from "react-leaflet";
-
-function toRad(x) {
-  return (x * Math.PI) / 180;
-}
-function distanceMeters(a, b) {
-  if (!a || !b) return Number.POSITIVE_INFINITY;
-  const R = 6371000;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-  return R * c;
-}
+import {
+  distanceMeters,
+  resolveAnchorLabel,
+  resolveAnchorPosition,
+} from "../utils/geo";
 
 function urgencyRadius(u) {
   if (u === 3) return 28;
@@ -33,29 +20,40 @@ export default function Map() {
   const [uid, setUid] = useState(null);
   const [profile, setProfile] = useState(null);
 
-  const [myPos, setMyPos] = useState(null);
+  const [livePos, setLivePos] = useState(null);
   const [pulses, setPulses] = useState([]);
 
   const radiusMeters = profile?.radiusMeters ?? 500;
+  const anchorPos = resolveAnchorPosition(livePos, profile?.home || null);
+  const anchorLabel = resolveAnchorLabel(livePos, profile?.home || null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUid(u?.uid ?? null);
+
       if (!u) {
         setProfile(null);
         return;
       }
+
       const pRef = doc(db, "profiles", u.uid);
       const snap = await getDoc(pRef);
       setProfile(snap.exists() ? snap.data() : null);
     });
+
     return () => unsub();
   }, []);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => {
+        setLivePos({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+      },
       () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -67,11 +65,13 @@ export default function Map() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (!myPos) return pulses;
-    return pulses.filter((p) => distanceMeters(myPos, p.location) <= radiusMeters);
-  }, [pulses, myPos, radiusMeters]);
+    if (!anchorPos) return pulses;
+    return pulses.filter(
+      (p) => distanceMeters(anchorPos, p.location) <= radiusMeters
+    );
+  }, [pulses, anchorPos, radiusMeters]);
 
-  const center = myPos || { lat: 47.1622, lng: 27.5889 }; // fallback Iași
+  const center = anchorPos || { lat: 47.1622, lng: 27.5889 };
 
   return (
     <div className="min-h-[calc(100vh-64px)] w-full bg-zinc-950 text-zinc-100">
@@ -80,37 +80,40 @@ export default function Map() {
           <div>
             <h1 className="mt-1 text-2xl font-extrabold">Hartă</h1>
             <div className="mt-1 text-sm text-zinc-400">
-              Pulses din raza ta, cu “density” (cercuri).
+              Pulses din raza ta, cu density circles.
             </div>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-right">
             <div className="text-xs text-zinc-400">Rază</div>
-            <div className="text-sm font-bold text-yellow-300">{radiusMeters}m</div>
-            <div className="mt-1 text-[11px] text-zinc-500">
-              {myPos ? "Geolocația PORNITĂ" : "Geolocația OPRITĂ"}
+            <div className="text-sm font-bold text-yellow-300">
+              {radiusMeters}m
             </div>
+            <div className="mt-1 text-[11px] text-zinc-500">{anchorLabel}</div>
           </div>
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-400">
+          Harta este centrată după:{" "}
+          <span className="font-bold text-zinc-200">{anchorLabel}</span>
         </div>
 
         <div className="mt-4 overflow-hidden rounded-3xl border border-zinc-800">
           <div className="h-[70vh] w-full">
             <MapContainer center={[center.lat, center.lng]} zoom={15} className="h-full w-full">
               <TileLayer
-                attribution='&copy; OpenStreetMap'
+                attribution="&copy; OpenStreetMap"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
-              {/* raza ta */}
-              {myPos ? (
+              {anchorPos ? (
                 <Circle
-                  center={[myPos.lat, myPos.lng]}
+                  center={[anchorPos.lat, anchorPos.lng]}
                   radius={radiusMeters}
                   pathOptions={{}}
                 />
               ) : null}
 
-              {/* “density” circles */}
               {filtered.map((p) => (
                 <CircleMarker
                   key={p.id}
@@ -125,9 +128,9 @@ export default function Map() {
                       <div className="mt-2 text-xs opacity-70">
                         Urgency: {p.urgency} | Confirmări: {p.confirmationsCount || 0}
                       </div>
-                      {myPos ? (
+                      {anchorPos ? (
                         <div className="mt-1 text-xs opacity-70">
-                          Distanță: {Math.round(distanceMeters(myPos, p.location))}m
+                          Distanță: {Math.round(distanceMeters(anchorPos, p.location))}m
                         </div>
                       ) : null}
                     </div>

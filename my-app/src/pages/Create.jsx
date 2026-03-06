@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { auth, db } from "../firebase";
+import { auth } from "../firebase";
+import { createPulse } from "../services/pulses";
 
 const TYPES = ["Emergency", "Skill", "Item"];
 const TYPES_BTN = ["Urgență", "Abilitate", "Obiect"];
+
 function validate({ title, text, type, urgency, location }) {
   if (!type) return "Selectați un tip de anunț.";
-  if (![1, 2, 3].includes(Number(urgency))) return "Gradul de urgență trebuie să fie 1, 2 or 3.";
+  if (![1, 2, 3].includes(Number(urgency))) {
+    return "Gradul de urgență trebuie să fie 1, 2 sau 3.";
+  }
   if (!title || title.trim().length < 3) return "Titlul este prea scurt.";
   if (!text || text.trim().length < 5) return "Descrierea este prea scurtă.";
-  if (!location || typeof location.lat !== "number" || typeof location.lng !== "number")
-    return "Locația lipsește. Folosiți 'Folosiți-mi locația'.";
+  if (
+    !location ||
+    typeof location.lat !== "number" ||
+    typeof location.lng !== "number"
+  ) {
+    return "Locația lipsește. Folosiți «Folosește-mi locația».";
+  }
   return null;
 }
 
@@ -45,7 +53,9 @@ export default function Create() {
       setError("Geolocația nu este acceptată de browser.");
       return;
     }
+
     setLocStatus("Obținem locația...");
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
@@ -53,7 +63,9 @@ export default function Create() {
       },
       () => {
         setLocStatus("Eroare");
-        setError("Nu am putut obține geolocația. Activați permisiunile de locație.");
+        setError(
+          "Nu am putut obține geolocația. Activați permisiunile de locație."
+        );
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -64,7 +76,7 @@ export default function Create() {
     setError("");
 
     if (!uid) {
-      setError("Trebuie să fi conectat pentru a publica o postare.");
+      setError("Trebuie să fii conectat pentru a publica o postare.");
       return;
     }
 
@@ -75,20 +87,15 @@ export default function Create() {
     }
 
     setSubmitting(true);
+
     try {
-      await addDoc(collection(db, "pulses"), {
+      await createPulse({
         type,
         urgency: Number(urgency),
         title: title.trim(),
         text: text.trim(),
         location,
         createdBy: uid,
-        status: "open",
-        pinned: false,
-        verifiedInfo: false,
-        confirmationsCount: 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
       });
 
       setTitle("");
@@ -115,7 +122,7 @@ export default function Create() {
 
         {!uid ? (
           <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-300">
-            Trebuie să fi conectat pentru a face o postare.
+            Trebuie să fii conectat pentru a face o postare.
           </div>
         ) : null}
 
@@ -178,22 +185,16 @@ export default function Create() {
               maxLength={600}
             />
 
-            <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={useMyLocation}
                 className="rounded-2xl bg-yellow-400 px-4 py-2 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300"
               >
-                Folosește-mi locația.
+                Folosește-mi locația
               </button>
               <div className="text-xs text-zinc-400">{locStatus}</div>
             </div>
-
-            {/* {location ? (
-              <div className="mt-3 text-[11px] text-zinc-500">
-                {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
-              </div>
-            ) : null} */}
           </div>
 
           {error ? (

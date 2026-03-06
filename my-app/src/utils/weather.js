@@ -1,5 +1,4 @@
 export async function fetchWeatherAlerts(lat, lng) {
-    console.log("Cheie", import.meta.env.VITE_OPENWEATHER_KEY);
   const key = import.meta.env.VITE_OPENWEATHER_KEY;
   if (!key) return { alerts: [], severeAlert: null };
 
@@ -25,7 +24,9 @@ export async function fetchWeatherAlerts(lat, lng) {
         t.includes("warning") ||
         t.includes("watch") ||
         t.includes("storm") ||
-        t.includes("extreme")
+        t.includes("extreme") ||
+        t.includes("flood") ||
+        t.includes("wind")
       );
     }) || null;
 

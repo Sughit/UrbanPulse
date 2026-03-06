@@ -7,8 +7,8 @@ import {
   onSnapshot,
   orderBy,
   query,
-  where,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { useLocation, useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
@@ -19,13 +19,20 @@ function useQueryParams() {
   return useMemo(() => new URLSearchParams(search), [search]);
 }
 
+function alertHeading(kind) {
+  if (kind === "confirm") return "Confirmare la postare";
+  if (kind === "message") return "Mesaj nou";
+  if (kind === "urgent-pulse") return "Urgență în apropiere";
+  return "Alertă";
+}
+
 export default function Notifications() {
   const nav = useNavigate();
   const qp = useQueryParams();
 
   const [uid, setUid] = useState(null);
 
-  const [tab, setTab] = useState(qp.get("tab") || "alerts"); 
+  const [tab, setTab] = useState(qp.get("tab") || "alerts");
   const [threadId, setThreadId] = useState(qp.get("thread") || "");
 
   const [alerts, setAlerts] = useState([]);
@@ -33,14 +40,14 @@ export default function Notifications() {
   const [msgs, setMsgs] = useState([]);
 
   const [typing, setTyping] = useState("");
-  const [titleUserCache, setTitleUserCache] = useState({}); 
+  const [userLabels, setUserLabels] = useState({});
 
   useEffect(() => {
     const params = new URLSearchParams();
     params.set("tab", tab);
     if (tab === "chat" && threadId) params.set("thread", threadId);
     nav(`/notifications?${params.toString()}`, { replace: true });
-  }, [tab, threadId]);
+  }, [tab, threadId, nav]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
@@ -49,26 +56,32 @@ export default function Notifications() {
 
   useEffect(() => {
     if (!uid) return;
+
     const q1 = query(
       collection(db, "notifications", uid, "items"),
       orderBy("createdAt", "desc")
     );
+
     const unsub = onSnapshot(q1, (snap) => {
       setAlerts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+
     return () => unsub();
   }, [uid]);
 
   useEffect(() => {
     if (!uid) return;
+
     const q2 = query(
       collection(db, "threads"),
       where("participants", "array-contains", uid),
       orderBy("updatedAt", "desc")
     );
+
     const unsub = onSnapshot(q2, (snap) => {
       setThreads(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+
     return () => unsub();
   }, [uid]);
 
@@ -77,34 +90,56 @@ export default function Notifications() {
       setMsgs([]);
       return;
     }
+
     const q3 = query(
       collection(db, "threads", threadId, "messages"),
       orderBy("createdAt", "asc")
     );
+
     const unsub = onSnapshot(q3, (snap) => {
       setMsgs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+
     return () => unsub();
   }, [uid, threadId]);
 
   async function resolveUserLabel(userId) {
     if (!userId) return "Unknown";
-    if (titleUserCache[userId]) return titleUserCache[userId];
+    if (userLabels[userId]) return userLabels[userId];
+
     try {
       const uSnap = await getDoc(doc(db, "users", userId));
       const label = uSnap.exists()
-        ? (uSnap.data().displayName || uSnap.data().email || userId)
+        ? uSnap.data().displayName || uSnap.data().email || userId
         : userId;
-      setTitleUserCache((p) => ({ ...p, [userId]: label }));
+
+      setUserLabels((prev) => ({ ...prev, [userId]: label }));
       return label;
     } catch {
       return userId;
     }
   }
 
+  useEffect(() => {
+    const ids = [
+      ...new Set([
+        ...alerts.map((a) => a.byUid).filter(Boolean),
+        ...threads
+          .flatMap((t) => t.participants || [])
+          .filter((id) => id && id !== uid),
+      ]),
+    ];
+
+    ids.forEach((id) => {
+      resolveUserLabel(id);
+    });
+  }, [alerts, threads, uid]);
+
   async function markRead(alertId) {
     if (!uid) return;
-    await updateDoc(doc(db, "notifications", uid, "items", alertId), { read: true });
+    await updateDoc(doc(db, "notifications", uid, "items", alertId), {
+      read: true,
+    });
   }
 
   if (!uid) {
@@ -120,8 +155,8 @@ export default function Notifications() {
   }
 
   const activeThread = threads.find((t) => t.id === threadId) || null;
-  const otherUid =
-    activeThread?.participants?.find((p) => p !== uid) || "";
+  const otherUid = activeThread?.participants?.find((p) => p !== uid) || "";
+  const otherLabel = otherUid ? userLabels[otherUid] || otherUid : "";
 
   return (
     <div className="min-h-[calc(100vh-64px)] w-full bg-zinc-950 text-zinc-100">
@@ -135,7 +170,6 @@ export default function Notifications() {
           </div>
         </div>
 
-        {/* CONTENT */}
         {tab === "alerts" ? (
           <div className="mt-5 space-y-3">
             {alerts.length === 0 ? (
@@ -153,11 +187,23 @@ export default function Notifications() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-extrabold">
-                        {a.kind === "confirm" ? "Confirmare la postare" : "Alertă"}
+                        {alertHeading(a.kind)}
                       </div>
+
                       <div className="mt-1 text-sm text-zinc-300">
                         {a.title ? `"${a.title}"` : "—"}
                       </div>
+
+                      {a.text ? (
+                        <div className="mt-2 text-sm text-zinc-400">{a.text}</div>
+                      ) : null}
+
+                      {a.byUid ? (
+                        <div className="mt-2 text-xs text-zinc-500">
+                          De la: {userLabels[a.byUid] || a.byUid}
+                        </div>
+                      ) : null}
+
                       <div className="mt-2 text-xs text-zinc-500">
                         {a.read ? "Citit" : "Necitit"}
                       </div>
@@ -178,20 +224,21 @@ export default function Notifications() {
           </div>
         ) : (
           <div className="mt-5">
-            {/* THREAD LIST */}
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/50 p-3">
-              <div className="text-sm font-extrabold text-zinc-200 px-2">
+              <div className="px-2 text-sm font-extrabold text-zinc-200">
                 Conversații
               </div>
 
               <div className="mt-2 space-y-2">
                 {threads.length === 0 ? (
                   <div className="px-2 py-3 text-sm text-zinc-400">
-                    Nicio conversație încă. Apasă “Mesaj” pe o postare.
+                    Nicio conversație încă. Apasă „Mesaj” pe o postare.
                   </div>
                 ) : (
                   threads.map((t) => {
                     const other = t.participants?.find((p) => p !== uid) || "";
+                    const otherText = userLabels[other] || other || "—";
+
                     return (
                       <button
                         key={t.id}
@@ -203,13 +250,10 @@ export default function Notifications() {
                         }`}
                       >
                         <div className="text-sm font-extrabold">
-                          Thread: {t.id.slice(0, 10)}…
+                          Cu: {otherText}
                         </div>
                         <div className="mt-1 text-xs text-zinc-400">
                           {t.lastMessage || "—"}
-                        </div>
-                        <div className="mt-1 text-[11px] text-zinc-500">
-                          Cu: {other || "—"}
                         </div>
                       </button>
                     );
@@ -218,7 +262,6 @@ export default function Notifications() {
               </div>
             </div>
 
-            {/* CHAT VIEW */}
             <div className="mt-4 rounded-3xl border border-zinc-800 bg-zinc-900/60 p-4">
               {!threadId ? (
                 <div className="text-sm text-zinc-400">
@@ -228,14 +271,14 @@ export default function Notifications() {
                 <>
                   <div className="text-sm font-extrabold">
                     Chat
-                    {otherUid ? (
+                    {otherLabel ? (
                       <span className="ml-2 text-xs font-bold text-zinc-400">
-                        ({otherUid})
+                        ({otherLabel})
                       </span>
                     ) : null}
                   </div>
 
-                  <div className="mt-3 max-h-[40vh] overflow-auto space-y-2 pr-1">
+                  <div className="mt-3 max-h-[40vh] space-y-2 overflow-auto pr-1">
                     {msgs.length === 0 ? (
                       <div className="text-sm text-zinc-400">
                         Niciun mesaj încă.
@@ -244,15 +287,15 @@ export default function Notifications() {
                       msgs.map((m) => (
                         <div
                           key={m.id}
-                          className={`w-full flex ${
+                          className={`flex w-full ${
                             m.from === uid ? "justify-end" : "justify-start"
                           }`}
                         >
                           <div
-                            className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm border ${
+                            className={`max-w-[80%] rounded-2xl border px-3 py-2 text-sm ${
                               m.from === uid
-                                ? "bg-yellow-400/15 border-yellow-400/30 text-zinc-100"
-                                : "bg-zinc-950/30 border-zinc-800 text-zinc-200"
+                                ? "border-yellow-400/30 bg-yellow-400/15 text-zinc-100"
+                                : "border-zinc-800 bg-zinc-950/30 text-zinc-200"
                             }`}
                           >
                             {m.text}
@@ -286,13 +329,11 @@ export default function Notifications() {
         )}
       </div>
 
-      <div className="fixed left-0 right-0 bottom-16 z-40 px-3">
-        <div className="mx-auto max-w-3xl rounded-3xl border border-zinc-800 bg-zinc-950/80 backdrop-blur p-2">
+      <div className="fixed bottom-16 left-0 right-0 z-40 px-3">
+        <div className="mx-auto max-w-3xl rounded-3xl border border-zinc-800 bg-zinc-950/80 p-2 backdrop-blur">
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() => {
-                setTab("chat");
-              }}
+              onClick={() => setTab("chat")}
               className={`w-full rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
                 tab === "chat"
                   ? "bg-yellow-400 text-zinc-950"

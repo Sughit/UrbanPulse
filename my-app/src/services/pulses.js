@@ -8,31 +8,87 @@ import {
   updateDoc,
   doc,
   increment,
-  setDoc,
   getDoc,
   where,
   getDocs,
   runTransaction,
+  setDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { distanceMeters } from "../utils/geo";
 
-/**
- * Live pulses (latest first).
- */
+async function createUserNotification(targetUid, payload) {
+  if (!targetUid) return;
+
+  await addDoc(collection(db, "notifications", targetUid, "items"), {
+    ...payload,
+    read: false,
+    createdAt: serverTimestamp(),
+  });
+}
+
+async function notifyNearbyUsersForUrgentPulse(pulseId, pulse) {
+  if (
+    pulse.type !== "Emergency" ||
+    Number(pulse.urgency) !== 3 ||
+    !pulse.location
+  ) {
+    return;
+  }
+
+  const profilesSnap = await getDocs(collection(db, "profiles"));
+
+  const writes = [];
+
+  profilesSnap.forEach((profileDoc) => {
+    const targetUid = profileDoc.id;
+    const profile = profileDoc.data();
+
+    if (!targetUid || targetUid === pulse.createdBy) return;
+    if (!profile?.home) return;
+
+    const limitMeters = Number(profile.distanceLimitMeters ?? 2000);
+    const dist = distanceMeters(profile.home, pulse.location);
+
+    if (dist <= limitMeters) {
+      writes.push(
+        createUserNotification(targetUid, {
+          kind: "urgent-pulse",
+          pulseId,
+          title: pulse.title || "Emergency nearby",
+          text: pulse.text || "",
+          byUid: pulse.createdBy || "",
+        })
+      );
+    }
+  });
+
+  await Promise.all(writes);
+}
+
 export function subscribeToPulses(onData) {
   const q = query(
     collection(db, "pulses"),
     orderBy("pinned", "desc"),
     orderBy("createdAt", "desc")
   );
+
   return onSnapshot(q, (snap) => {
     const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     onData(items);
   });
 }
 
-export async function createPulse({ type, urgency, title, text, location, createdBy, systemTag = null }) {
-  const ref = await addDoc(collection(db, "pulses"), {
+export async function createPulse({
+  type,
+  urgency,
+  title,
+  text,
+  location,
+  createdBy,
+  systemTag = null,
+}) {
+  const payload = {
     type,
     urgency,
     title,
@@ -46,17 +102,18 @@ export async function createPulse({ type, urgency, title, text, location, create
     systemTag: systemTag || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  };
+
+  const ref = await addDoc(collection(db, "pulses"), payload);
+
+  await notifyNearbyUsersForUrgentPulse(ref.id, {
+    ...payload,
+    createdBy,
   });
+
   return ref.id;
 }
 
-/**
- * Confirm pulse:
- * - 1 confirm / user
- * - increments confirmationsCount
- * - if >= 3 => verifiedInfo true
- * - sends notification to pulse owner (if not self)
- */
 export async function confirmPulse(pulseId, uid) {
   const pulseRef = doc(db, "pulses", pulseId);
   const pulseSnap = await getDoc(pulseRef);
@@ -68,7 +125,7 @@ export async function confirmPulse(pulseId, uid) {
   await runTransaction(db, async (tx) => {
     const cRef = doc(db, "pulses", pulseId, "confirmations", uid);
     const cSnap = await tx.get(cRef);
-    if (cSnap.exists()) return; // deja confirmat
+    if (cSnap.exists()) return;
 
     tx.set(cRef, { createdAt: serverTimestamp() });
 
@@ -81,29 +138,26 @@ export async function confirmPulse(pulseId, uid) {
 
     tx.update(pulseRef, {
       confirmationsCount: increment(1),
-      verifiedInfo: nextCount >= 3 ? true : (current.verifiedInfo || false),
+      verifiedInfo: nextCount >= 3 ? true : current.verifiedInfo || false,
       updatedAt: serverTimestamp(),
     });
   });
 
-  // Notificare către owner
   if (ownerUid && ownerUid !== uid) {
-    await addDoc(collection(db, "notifications", ownerUid, "items"), {
+    await createUserNotification(ownerUid, {
       kind: "confirm",
       pulseId,
       byUid: uid,
       title: pulse.title || "",
-      createdAt: serverTimestamp(),
-      read: false,
     });
   }
 }
 
-/**
- * Severe Weather => ensure pinned "Safety Check-in".
- * We store it as a pulse with systemTag = "safety-checkin".
- */
-export async function ensureSafetyCheckin({ location, createdBy = "system", severeTitle = "Severe Weather" }) {
+export async function ensureSafetyCheckin({
+  location,
+  createdBy = "system",
+  severeTitle = "Severe Weather",
+}) {
   const q = query(
     collection(db, "pulses"),
     where("systemTag", "==", "safety-checkin")
@@ -114,11 +168,12 @@ export async function ensureSafetyCheckin({ location, createdBy = "system", seve
     type: "Emergency",
     urgency: 3,
     title: "Safety Check-in",
-    text: `⚠️ ${severeTitle}. Scrie “Sunt OK” / “Am nevoie de ajutor” + detalii.`,
+    text: `${severeTitle}. Scrie “Sunt OK” / “Am nevoie de ajutor” + detalii.`,
     location,
     status: "open",
     pinned: true,
     systemTag: "safety-checkin",
+    verifiedInfo: true,
     updatedAt: serverTimestamp(),
   };
 
@@ -126,14 +181,24 @@ export async function ensureSafetyCheckin({ location, createdBy = "system", seve
     await addDoc(collection(db, "pulses"), {
       ...payload,
       createdBy,
-      verifiedInfo: true,
       confirmationsCount: 0,
       createdAt: serverTimestamp(),
     });
     return;
   }
 
-  // update first existing
-  const first = snap.docs[0];
-  await updateDoc(doc(db, "pulses", first.id), payload);
+  const docs = snap.docs;
+
+  await updateDoc(doc(db, "pulses", docs[0].id), payload);
+
+  if (docs.length > 1) {
+    const extraUpdates = docs.slice(1).map((d) =>
+      updateDoc(doc(db, "pulses", d.id), {
+        pinned: false,
+        status: "closed",
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await Promise.all(extraUpdates);
+  }
 }
