@@ -145,11 +145,7 @@ export default function Profile() {
         {
           displayName: displayName?.trim() || user.displayName || "",
           email: user.email || "",
-          role: "user",
-          verifiedNeighbor: false,
-          trustScore: 0,
           updatedAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
         },
         { merge: true }
       );
@@ -302,7 +298,7 @@ export default function Profile() {
                   )}
                 </div>
               </div>
-              
+
               <label className="mt-4 block text-sm font-bold text-zinc-200">
                 Cartier
               </label>

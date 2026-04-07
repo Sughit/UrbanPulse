@@ -85,8 +85,15 @@ export default function Map() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (!centerPoint) return pulses;
-    return pulses.filter((p) => distanceMeters(centerPoint, p.location) <= radiusMeters);
+    const valid = pulses.filter(
+      (p) =>
+        p?.location &&
+        typeof p.location.lat === "number" &&
+        typeof p.location.lng === "number"
+    );
+
+    if (!centerPoint) return valid;
+    return valid.filter((p) => distanceMeters(centerPoint, p.location) <= radiusMeters);
   }, [pulses, centerPoint, radiusMeters]);
 
   return (

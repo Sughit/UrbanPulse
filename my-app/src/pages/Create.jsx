@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { auth } from "../firebase";
 import { createPulse } from "../services/pulses";
 
@@ -73,6 +74,12 @@ export default function Create() {
 
     if (!uid) {
       setError("Trebuie să fii conectat pentru a publica.");
+      return;
+    }
+
+    const userSnap = await getDoc(doc(db, "users", uid));
+    if (userSnap.exists() && userSnap.data().blocked) {
+      setError("Contul tău este restricționat și nu poate publica.");
       return;
     }
 
