@@ -4,28 +4,53 @@ import { doc, getDoc } from "firebase/firestore";
 import { MapContainer, TileLayer, Circle, CircleMarker, Popup } from "react-leaflet";
 import { auth, db } from "../firebase";
 import { subscribeToPulses } from "../services/pulses";
-import {
-  distanceMeters,
-  resolveAnchorLabel,
-  resolveAnchorPosition,
-} from "../utils/geo";
+import { distanceMeters } from "../utils/geo";
 
-function urgencyRadius(u) {
-  if (u === 3) return 28;
-  if (u === 2) return 22;
-  return 16;
+function pulseVisual(p) {
+  if (p.type === "Emergency") {
+    return {
+      radius: p.urgency === 3 ? 18 : p.urgency === 2 ? 14 : 11,
+      pathOptions: {
+        color: "#ef4444",
+        fillColor: "#ef4444",
+        fillOpacity: 0.45,
+        weight: p.verifiedInfo ? 4 : 2,
+      },
+    };
+  }
+
+  if (p.type === "Skill") {
+    return {
+      radius: 14,
+      pathOptions: {
+        color: "#3b82f6",
+        fillColor: "#3b82f6",
+        fillOpacity: 0.4,
+        weight: p.verifiedInfo ? 4 : 2,
+      },
+    };
+  }
+
+  return {
+    radius: p.mode === "offer" ? 15 : 13,
+    pathOptions: {
+      color: "#22c55e",
+      fillColor: "#22c55e",
+      fillOpacity: 0.4,
+      weight: p.verifiedInfo ? 4 : 2,
+    },
+  };
 }
 
 export default function Map() {
   const [uid, setUid] = useState(null);
   const [profile, setProfile] = useState(null);
-
-  const [livePos, setLivePos] = useState(null);
+  const [myPos, setMyPos] = useState(null);
   const [pulses, setPulses] = useState([]);
 
   const radiusMeters = profile?.radiusMeters ?? 500;
-  const anchorPos = resolveAnchorPosition(livePos, profile?.home || null);
-  const anchorLabel = resolveAnchorLabel(livePos, profile?.home || null);
+  const centerPoint = profile?.home || null;
+  const center = centerPoint || myPos || { lat: 47.1622, lng: 27.5889 };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -48,12 +73,7 @@ export default function Map() {
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLivePos({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        });
-      },
+      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -65,13 +85,9 @@ export default function Map() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (!anchorPos) return pulses;
-    return pulses.filter(
-      (p) => distanceMeters(anchorPos, p.location) <= radiusMeters
-    );
-  }, [pulses, anchorPos, radiusMeters]);
-
-  const center = anchorPos || { lat: 47.1622, lng: 27.5889 };
+    if (!centerPoint) return pulses;
+    return pulses.filter((p) => distanceMeters(centerPoint, p.location) <= radiusMeters);
+  }, [pulses, centerPoint, radiusMeters]);
 
   return (
     <div className="min-h-[calc(100vh-64px)] w-full bg-zinc-950 text-zinc-100">
@@ -80,70 +96,92 @@ export default function Map() {
           <div>
             <h1 className="mt-1 text-2xl font-extrabold">Hartă</h1>
             <div className="mt-1 text-sm text-zinc-400">
-              Pulses din raza ta, cu density circles.
+              Pulse-uri din raza setată în profil, diferențiate pe tipuri.
             </div>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-right">
             <div className="text-xs text-zinc-400">Rază</div>
-            <div className="text-sm font-bold text-yellow-300">
-              {radiusMeters}m
+            <div className="text-sm font-bold text-yellow-300">{radiusMeters}m</div>
+            <div className="mt-1 text-[11px] text-zinc-500">
+              {profile?.home ? "Centru: domiciliu profil" : myPos ? "Centru: locație curentă" : "Centru indisponibil"}
             </div>
-            <div className="mt-1 text-[11px] text-zinc-500">{anchorLabel}</div>
           </div>
         </div>
 
-        <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-400">
-          Harta este centrată după:{" "}
-          <span className="font-bold text-zinc-200">{anchorLabel}</span>
+        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300">
+            <span className="font-bold text-red-300">Roșu</span> — Urgență
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300">
+            <span className="font-bold text-blue-300">Albastru</span> — Abilitate
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300">
+            <span className="font-bold text-emerald-300">Verde</span> — Obiect / Împrumut
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300">
+            <span className="font-bold text-zinc-100">Contur gros</span> — Verificat
+          </div>
         </div>
 
         <div className="mt-4 overflow-hidden rounded-3xl border border-zinc-800">
-          <div className="h-[70vh] w-full">
+          <div className="h-[56vh] w-full">
             <MapContainer center={[center.lat, center.lng]} zoom={15} className="h-full w-full">
               <TileLayer
                 attribution="&copy; OpenStreetMap"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
-              {anchorPos ? (
+              {centerPoint ? (
                 <Circle
-                  center={[anchorPos.lat, anchorPos.lng]}
+                  center={[centerPoint.lat, centerPoint.lng]}
                   radius={radiusMeters}
-                  pathOptions={{}}
+                  pathOptions={{ color: "#facc15", weight: 2, fillOpacity: 0.04 }}
                 />
               ) : null}
 
-              {filtered.map((p) => (
-                <CircleMarker
-                  key={p.id}
-                  center={[p.location?.lat || 0, p.location?.lng || 0]}
-                  radius={urgencyRadius(p.urgency)}
-                  pathOptions={{}}
-                >
-                  <Popup>
-                    <div className="text-sm">
-                      <div className="font-bold">{p.title}</div>
-                      <div className="opacity-80">{p.text}</div>
-                      <div className="mt-2 text-xs opacity-70">
-                        Urgency: {p.urgency} | Confirmări: {p.confirmationsCount || 0}
-                      </div>
-                      {anchorPos ? (
-                        <div className="mt-1 text-xs opacity-70">
-                          Distanță: {Math.round(distanceMeters(anchorPos, p.location))}m
+              {filtered.map((p) => {
+                const style = pulseVisual(p);
+
+                return (
+                  <CircleMarker
+                    key={p.id}
+                    center={[p.location?.lat || 0, p.location?.lng || 0]}
+                    radius={style.radius}
+                    pathOptions={style.pathOptions}
+                  >
+                    <Popup>
+                      <div className="text-sm">
+                        <div className="font-bold">{p.title}</div>
+                        <div className="opacity-80">{p.text}</div>
+                        <div className="mt-2 text-xs opacity-70">
+                          Tip: {p.type} | Mod: {p.mode || "need"} | Urgență: {p.urgency}
                         </div>
-                      ) : null}
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              ))}
+                        <div className="mt-1 text-xs opacity-70">
+                          Confirmări: {p.confirmationsCount || 0}
+                        </div>
+                        {centerPoint ? (
+                          <div className="mt-1 text-xs opacity-70">
+                            Distanță: {Math.round(distanceMeters(centerPoint, p.location))}m
+                          </div>
+                        ) : null}
+                        {p.verifiedInfo ? (
+                          <div className="mt-1 text-xs font-bold text-emerald-700">
+                            Verificat
+                          </div>
+                        ) : null}
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                );
+              })}
             </MapContainer>
           </div>
         </div>
 
         {!uid ? (
           <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 text-zinc-400">
-            Conectează-te ca să folosești raza din profil.
+            Conectează-te ca să folosești raza și centrul din profil.
           </div>
         ) : null}
       </div>

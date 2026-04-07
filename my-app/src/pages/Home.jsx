@@ -10,22 +10,11 @@ import {
   query,
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
-import {
-  confirmPulse,
-  ensureSafetyCheckin,
-} from "../services/pulses";
+import { ensureSafetyCheckin, confirmPulse } from "../services/pulses";
 import { fetchWeatherAlerts } from "../utils/weather";
-import {
-  makeEventKeyFromAlert,
-  hasCheckedIn,
-  safetyCheckIn,
-} from "../utils/safety";
+import { makeEventKeyFromAlert, hasCheckedIn, safetyCheckIn } from "../utils/safety";
 import { getOrCreateThread } from "../utils/messages";
-import {
-  distanceMeters,
-  resolveAnchorLabel,
-  resolveAnchorPosition,
-} from "../utils/geo";
+import { distanceMeters } from "../utils/geo";
 
 function urgencyLabel(u) {
   if (u === 3) return "URGENT";
@@ -39,80 +28,30 @@ function urgencyPill(u) {
   return "bg-emerald-500/15 text-emerald-200 border-emerald-500/30";
 }
 
+function typePill(type) {
+  if (type === "Emergency") return "border-red-500/30 bg-red-500/10 text-red-200";
+  if (type === "Skill") return "border-blue-500/30 bg-blue-500/10 text-blue-200";
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+}
+
+function modeLabel(mode) {
+  return mode === "offer" ? "Oferă" : "Are nevoie";
+}
+
 export default function Home() {
   const [uid, setUid] = useState(null);
   const [profile, setProfile] = useState(null);
-
   const [loading, setLoading] = useState(true);
   const [pulses, setPulses] = useState([]);
-  const [livePos, setLivePos] = useState(null);
+  const [myPos, setMyPos] = useState(null);
   const [myConfirmations, setMyConfirmations] = useState(new Set());
-
   const [severeAlert, setSevereAlert] = useState(null);
   const [safetyHidden, setSafetyHidden] = useState(false);
   const [checking, setChecking] = useState(false);
 
   const radiusMeters = profile?.radiusMeters ?? 500;
-  const anchorPos = resolveAnchorPosition(livePos, profile?.home || null);
-  const anchorLabel = resolveAnchorLabel(livePos, profile?.home || null);
-
+  const feedCenter = profile?.home || myPos;
   const nav = useNavigate();
-
-  const TYPE_LABEL_BTN = {
-    Emergency: "Urgență",
-    Skill: "Abilitate",
-    Item: "Obiect",
-  };
-
-  async function onSafetyCheckin() {
-    if (!uid || !severeAlert) return;
-
-    setChecking(true);
-    try {
-      const eventKey = makeEventKeyFromAlert(severeAlert);
-      await safetyCheckIn(eventKey, uid);
-      setSafetyHidden(true);
-    } catch (e) {
-      alert(e?.message || "Nu am putut salva Safety Check-in.");
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!uid) {
-      setMyConfirmations(new Set());
-      return;
-    }
-
-    if (pulses.length === 0) {
-      setMyConfirmations(new Set());
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const checks = await Promise.all(
-          pulses.map(async (p) => {
-            const cRef = doc(db, "pulses", p.id, "confirmations", uid);
-            const cSnap = await getDoc(cRef);
-            return cSnap.exists() ? p.id : null;
-          })
-        );
-
-        if (cancelled) return;
-        setMyConfirmations(new Set(checks.filter(Boolean)));
-      } catch (e) {
-        console.error("Failed to load confirmations:", e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [uid, pulses]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -135,78 +74,11 @@ export default function Home() {
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLivePos({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        });
-      },
+      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
-
-  useEffect(() => {
-    if (!anchorPos) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const { severeAlert } = await fetchWeatherAlerts(
-          anchorPos.lat,
-          anchorPos.lng
-        );
-
-        if (cancelled) return;
-
-        if (severeAlert) {
-          await ensureSafetyCheckin({
-            location: anchorPos,
-            severeTitle: severeAlert.event || "Severe Weather",
-          });
-        }
-      } catch (e) {
-        console.warn("Weather alerts failed:", e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [anchorPos]);
-
-  useEffect(() => {
-    if (!anchorPos) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const { severeAlert } = await fetchWeatherAlerts(
-          anchorPos.lat,
-          anchorPos.lng
-        );
-
-        if (cancelled) return;
-
-        setSevereAlert(severeAlert);
-        setSafetyHidden(false);
-
-        if (severeAlert && uid) {
-          const eventKey = makeEventKeyFromAlert(severeAlert);
-          const already = await hasCheckedIn(eventKey, uid);
-          if (!cancelled && already) setSafetyHidden(true);
-        }
-      } catch (e) {
-        console.warn("Weather alerts failed:", e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [anchorPos, uid]);
 
   useEffect(() => {
     setLoading(true);
@@ -230,12 +102,91 @@ export default function Home() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    if (!uid || pulses.length === 0) {
+      setMyConfirmations(new Set());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const checks = await Promise.all(
+        pulses.map(async (p) => {
+          const cRef = doc(db, "pulses", p.id, "confirmations", uid);
+          const cSnap = await getDoc(cRef);
+          return cSnap.exists() ? p.id : null;
+        })
+      );
+
+      if (cancelled) return;
+      setMyConfirmations(new Set(checks.filter(Boolean)));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, pulses]);
+
+  useEffect(() => {
+    if (!myPos) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { severeAlert } = await fetchWeatherAlerts(myPos.lat, myPos.lng);
+        if (cancelled) return;
+
+        if (severeAlert) {
+          const eventKey = makeEventKeyFromAlert(severeAlert);
+
+          await ensureSafetyCheckin({
+            eventKey,
+            location: myPos,
+            severeTitle: severeAlert.event || "Severe Weather",
+          });
+
+          setSevereAlert(severeAlert);
+          setSafetyHidden(false);
+
+          if (uid) {
+            const already = await hasCheckedIn(eventKey, uid);
+            if (!cancelled && already) setSafetyHidden(true);
+          }
+        } else {
+          setSevereAlert(null);
+          setSafetyHidden(true);
+        }
+      } catch (e) {
+        console.warn("Weather alerts failed:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [myPos, uid]);
+
   const filtered = useMemo(() => {
-    if (!anchorPos) return pulses;
-    return pulses.filter(
-      (p) => distanceMeters(anchorPos, p.location) <= radiusMeters
-    );
-  }, [pulses, anchorPos, radiusMeters]);
+    if (!feedCenter) return pulses;
+    return pulses.filter((p) => distanceMeters(feedCenter, p.location) <= radiusMeters);
+  }, [pulses, feedCenter, radiusMeters]);
+
+  async function onSafetyCheckin() {
+    if (!uid || !severeAlert) return;
+
+    setChecking(true);
+    try {
+      const eventKey = makeEventKeyFromAlert(severeAlert);
+      await safetyCheckIn(eventKey, uid);
+      setSafetyHidden(true);
+    } catch (e) {
+      alert(e?.message || "Nu am putut salva Safety Check-in.");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function handleConfirm(pulseId) {
     if (!uid) return;
@@ -244,7 +195,6 @@ export default function Home() {
       await confirmPulse(pulseId, uid);
       setMyConfirmations((prev) => new Set(prev).add(pulseId));
     } catch (e) {
-      console.error("Confirmarea a eșuat:", e);
       alert(e?.message || "Confirmarea a eșuat.");
     }
   }
@@ -255,18 +205,14 @@ export default function Home() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="mt-1 text-2xl font-extrabold">Acasă</h1>
-            <div className="mt-1 text-sm text-zinc-400">
-              Postări din cartierul tău.
-            </div>
+            <div className="mt-1 text-sm text-zinc-400">Postări din zona setată în profil.</div>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-right">
-            <div className="text-xs text-zinc-400">Rază</div>
-            <div className="text-sm font-bold text-yellow-300">
-              {radiusMeters}m
-            </div>
+            <div className="text-xs text-zinc-400">Rază profil</div>
+            <div className="text-sm font-bold text-yellow-300">{radiusMeters}m</div>
             <div className="mt-1 text-[11px] text-zinc-500">
-              {anchorLabel}
+              {profile?.home ? "Centru: domiciliu profil" : myPos ? "Centru: locație curentă" : "Centru indisponibil"}
             </div>
           </div>
         </div>
@@ -279,8 +225,7 @@ export default function Home() {
                   Alertă meteo: {severeAlert.event || "Severe Weather"}
                 </div>
                 <div className="mt-1 text-sm text-zinc-200">
-                  Apasă „Sunt OK” ca să apari în Safety Check-in pentru acest
-                  eveniment.
+                  Apasă „Sunt OK” ca să apari în Safety Check-in.
                 </div>
               </div>
 
@@ -288,23 +233,12 @@ export default function Home() {
                 onClick={onSafetyCheckin}
                 disabled={!uid || checking}
                 className="shrink-0 rounded-2xl bg-yellow-400 px-4 py-2 text-sm font-extrabold text-zinc-950 hover:bg-yellow-300 disabled:opacity-50"
-                title={!uid ? "Trebuie să fii conectat" : "Confirmă Safety Check-in"}
               >
                 {checking ? "Se salvează..." : "Sunt OK"}
               </button>
             </div>
           </div>
         ) : null}
-
-        <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-400">
-          Feed-ul este filtrat după:{" "}
-          <span className="font-bold text-zinc-200">{anchorLabel}</span>
-          {anchorPos ? (
-            <span className="ml-2 text-zinc-500">
-              ({anchorPos.lat.toFixed(5)}, {anchorPos.lng.toFixed(5)})
-            </span>
-          ) : null}
-        </div>
 
         <div className="mt-5">
           {loading ? (
@@ -334,22 +268,16 @@ export default function Home() {
                             </span>
                           ) : null}
 
-                          {p.systemTag === "safety-checkin" ? (
-                            <span className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/15 px-3 py-1 text-xs font-bold text-fuchsia-200">
-                              SYSTEM
-                            </span>
-                          ) : null}
-
-                          <span
-                            className={`rounded-full border px-3 py-1 text-xs font-bold ${urgencyPill(
-                              p.urgency
-                            )}`}
-                          >
+                          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${urgencyPill(p.urgency)}`}>
                             {urgencyLabel(p.urgency)}
                           </span>
 
+                          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${typePill(p.type)}`}>
+                            {p.type}
+                          </span>
+
                           <span className="rounded-full border border-zinc-700 bg-zinc-800/60 px-3 py-1 text-xs font-bold text-zinc-200">
-                            {TYPE_LABEL_BTN[p.type] ?? p.type}
+                            {modeLabel(p.mode)}
                           </span>
 
                           {p.verifiedInfo ? (
@@ -359,35 +287,14 @@ export default function Home() {
                           ) : null}
                         </div>
 
-                        <h2 className="mt-3 truncate text-lg font-extrabold">
-                          {p.title}
-                        </h2>
-
+                        <h2 className="mt-3 truncate text-lg font-extrabold">{p.title}</h2>
                         <p className="mt-1 text-sm text-zinc-300">{p.text}</p>
 
-                        <div className="mt-3 grid w-max grid-flow-col items-center gap-2 text-xs text-zinc-500">
-                          <span>
-                            Status:{" "}
-                            <span className="font-semibold text-zinc-300">
-                              {p.status}
-                            </span>
-                          </span>
-
-                          <span>
-                            Confirmări:{" "}
-                            <span className="font-semibold text-zinc-300">
-                              {p.confirmationsCount ?? 0}
-                            </span>
-                          </span>
-
-                          {anchorPos && p.location ? (
-                            <span>
-                              Distanța:{" "}
-                              <span className="font-semibold text-zinc-300">
-                                {Math.round(distanceMeters(anchorPos, p.location))}
-                                m
-                              </span>
-                            </span>
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                          <span>Status: <span className="font-semibold text-zinc-300">{p.status}</span></span>
+                          <span>Confirmări: <span className="font-semibold text-zinc-300">{p.confirmationsCount ?? 0}</span></span>
+                          {feedCenter && p.location ? (
+                            <span>Distanță: <span className="font-semibold text-zinc-300">{Math.round(distanceMeters(feedCenter, p.location))}m</span></span>
                           ) : null}
                         </div>
                       </div>
@@ -413,7 +320,6 @@ export default function Home() {
                               ? "border border-zinc-700 bg-zinc-800/60 text-zinc-400"
                               : "bg-yellow-400 text-zinc-950 hover:bg-yellow-300"
                           } ${!uid ? "opacity-50" : ""}`}
-                          title={!uid ? "Necesită conectare" : "Aprobă"}
                         >
                           {confirmed ? "Aprobat" : "Aprobă"}
                         </button>

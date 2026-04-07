@@ -26,6 +26,9 @@ function clampNum(n, min, max, fallback) {
 export default function Profile() {
   const [user, setUser] = useState(null);
 
+  const [trustScore, setTrustScore] = useState(0);
+  const [verifiedNeighbor, setVerifiedNeighbor] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -74,6 +77,11 @@ export default function Profile() {
 
         const pRef = doc(db, "profiles", u.uid);
         const pSnap = await getDoc(pRef);
+        if (uSnap.exists()) {
+          setDisplayName(uSnap.data().displayName || u.displayName || "");
+          setTrustScore(Number(uSnap.data().trustScore || 0));
+          setVerifiedNeighbor(!!uSnap.data().verifiedNeighbor);
+        }
         if (pSnap.exists()) {
           const p = pSnap.data();
           setNeighborhoodName(p.neighborhoodName || "");
@@ -276,7 +284,25 @@ export default function Profile() {
                 placeholder="Numele tău"
                 maxLength={50}
               />
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-4">
 
+              <div className="text-lg font-extrabold">Încredere în comunitate</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-zinc-700 bg-zinc-800/60 px-3 py-1 text-xs font-bold text-zinc-200">
+                    Trust score: {trustScore}
+                  </span>
+                  {verifiedNeighbor ? (
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-200">
+                      Verified Neighbor
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-zinc-700 bg-zinc-800/60 px-3 py-1 text-xs font-bold text-zinc-400">
+                      Neverificat
+                    </span>
+                  )}
+                </div>
+              </div>
+              
               <label className="mt-4 block text-sm font-bold text-zinc-200">
                 Cartier
               </label>

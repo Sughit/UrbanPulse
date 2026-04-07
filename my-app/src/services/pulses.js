@@ -8,63 +8,14 @@ import {
   updateDoc,
   doc,
   increment,
+  setDoc,
   getDoc,
   where,
   getDocs,
   runTransaction,
-  setDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import { distanceMeters } from "../utils/geo";
-
-async function createUserNotification(targetUid, payload) {
-  if (!targetUid) return;
-
-  await addDoc(collection(db, "notifications", targetUid, "items"), {
-    ...payload,
-    read: false,
-    createdAt: serverTimestamp(),
-  });
-}
-
-async function notifyNearbyUsersForUrgentPulse(pulseId, pulse) {
-  if (
-    pulse.type !== "Emergency" ||
-    Number(pulse.urgency) !== 3 ||
-    !pulse.location
-  ) {
-    return;
-  }
-
-  const profilesSnap = await getDocs(collection(db, "profiles"));
-
-  const writes = [];
-
-  profilesSnap.forEach((profileDoc) => {
-    const targetUid = profileDoc.id;
-    const profile = profileDoc.data();
-
-    if (!targetUid || targetUid === pulse.createdBy) return;
-    if (!profile?.home) return;
-
-    const limitMeters = Number(profile.distanceLimitMeters ?? 2000);
-    const dist = distanceMeters(profile.home, pulse.location);
-
-    if (dist <= limitMeters) {
-      writes.push(
-        createUserNotification(targetUid, {
-          kind: "urgent-pulse",
-          pulseId,
-          title: pulse.title || "Emergency nearby",
-          text: pulse.text || "",
-          byUid: pulse.createdBy || "",
-        })
-      );
-    }
-  });
-
-  await Promise.all(writes);
-}
+import { pushNotification } from "./notifications";
 
 export function subscribeToPulses(onData) {
   const q = query(
@@ -81,6 +32,7 @@ export function subscribeToPulses(onData) {
 
 export async function createPulse({
   type,
+  mode,
   urgency,
   title,
   text,
@@ -88,8 +40,9 @@ export async function createPulse({
   createdBy,
   systemTag = null,
 }) {
-  const payload = {
+  const ref = await addDoc(collection(db, "pulses"), {
     type,
+    mode,
     urgency,
     title,
     text,
@@ -102,13 +55,6 @@ export async function createPulse({
     systemTag: systemTag || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  };
-
-  const ref = await addDoc(collection(db, "pulses"), payload);
-
-  await notifyNearbyUsersForUrgentPulse(ref.id, {
-    ...payload,
-    createdBy,
   });
 
   return ref.id;
@@ -133,18 +79,17 @@ export async function confirmPulse(pulseId, uid) {
     if (!pSnap.exists()) throw new Error("Postarea nu există.");
 
     const current = pSnap.data();
-    const currentCount = Number(current.confirmationsCount || 0);
-    const nextCount = currentCount + 1;
+    const nextCount = Number(current.confirmationsCount || 0) + 1;
 
     tx.update(pulseRef, {
       confirmationsCount: increment(1),
-      verifiedInfo: nextCount >= 3 ? true : current.verifiedInfo || false,
+      verifiedInfo: nextCount >= 3 ? true : !!current.verifiedInfo,
       updatedAt: serverTimestamp(),
     });
   });
 
   if (ownerUid && ownerUid !== uid) {
-    await createUserNotification(ownerUid, {
+    await pushNotification(ownerUid, {
       kind: "confirm",
       pulseId,
       byUid: uid,
@@ -154,26 +99,26 @@ export async function confirmPulse(pulseId, uid) {
 }
 
 export async function ensureSafetyCheckin({
+  eventKey,
   location,
   createdBy = "system",
   severeTitle = "Severe Weather",
 }) {
-  const q = query(
-    collection(db, "pulses"),
-    where("systemTag", "==", "safety-checkin")
-  );
+  const tag = `safety-checkin-${eventKey}`;
+
+  const q = query(collection(db, "pulses"), where("systemTag", "==", tag));
   const snap = await getDocs(q);
 
   const payload = {
     type: "Emergency",
+    mode: "need",
     urgency: 3,
     title: "Safety Check-in",
-    text: `${severeTitle}. Scrie “Sunt OK” / “Am nevoie de ajutor” + detalii.`,
+    text: `⚠️ ${severeTitle}. Scrie “Sunt OK” / “Am nevoie de ajutor” + detalii.`,
     location,
     status: "open",
     pinned: true,
-    systemTag: "safety-checkin",
-    verifiedInfo: true,
+    systemTag: tag,
     updatedAt: serverTimestamp(),
   };
 
@@ -181,24 +126,13 @@ export async function ensureSafetyCheckin({
     await addDoc(collection(db, "pulses"), {
       ...payload,
       createdBy,
+      verifiedInfo: true,
       confirmationsCount: 0,
       createdAt: serverTimestamp(),
     });
     return;
   }
 
-  const docs = snap.docs;
-
-  await updateDoc(doc(db, "pulses", docs[0].id), payload);
-
-  if (docs.length > 1) {
-    const extraUpdates = docs.slice(1).map((d) =>
-      updateDoc(doc(db, "pulses", d.id), {
-        pinned: false,
-        status: "closed",
-        updatedAt: serverTimestamp(),
-      })
-    );
-    await Promise.all(extraUpdates);
-  }
+  const first = snap.docs[0];
+  await updateDoc(doc(db, "pulses", first.id), payload);
 }
