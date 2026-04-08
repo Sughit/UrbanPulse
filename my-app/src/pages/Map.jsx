@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Circle, CircleMarker, Popup } from "react-leaf
 import { auth, db } from "../firebase";
 import { subscribeToPulses } from "../services/pulses";
 import { distanceMeters } from "../utils/geo";
+import { getAppLocation } from "../utils/location";
 
 function pulseVisual(p) {
   if (p.type === "Emergency") {
@@ -70,13 +71,24 @@ export default function Map() {
   }, []);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    let cancelled = false;
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
+    (async () => {
+      try {
+        const coords = await getAppLocation({
+          enableHighAccuracy: true,
+          timeout: 10000,
+        });
+
+        if (!cancelled) setMyPos(coords);
+      } catch {
+        // ignorăm dacă utilizatorul nu dă permisiune
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

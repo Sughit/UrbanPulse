@@ -9,6 +9,7 @@ import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, serverTimestamp, deleteDoc } from "firebase/firestore";
+import { getAppLocation } from "../utils/location";
 
 function parseTags(input) {
   return input
@@ -112,21 +113,21 @@ export default function Profile() {
 
   const skillTags = useMemo(() => parseTags(skillTagsInput), [skillTagsInput]);
 
-  function useMyLocation() {
+  async function useMyLocation() {
     setErr("");
     setMsg("");
-    if (!navigator.geolocation) {
-      setErr("Geolocația nu este suportată.");
-      return;
+
+    try {
+      const coords = await getAppLocation({
+        enableHighAccuracy: true,
+        timeout: 10000,
+      });
+
+      setHome(coords);
+      setMsg("Locația domiciliului setată.");
+    } catch (e) {
+      setErr(e?.message || "Nu am putut obține locația.");
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setHome({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setMsg("Locația domiciliului setată.");
-      },
-      () => setErr("Nu am putut obține permisiunea pentru a accesa locația."),
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
   }
 
   async function saveProfile() {

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
 import { createPulse } from "../services/pulses";
+import { getAppLocation } from "../utils/location";
 
 const TYPES = ["Emergency", "Skill", "Item"];
 const TYPES_BTN = ["Urgență", "Abilitate", "Obiect"];
@@ -47,25 +48,22 @@ export default function Create() {
     return !err && !!uid && !submitting;
   }, [title, text, type, mode, urgency, location, uid, submitting]);
 
-  function useMyLocation() {
+  async function useMyLocation() {
     setError("");
-    if (!navigator.geolocation) {
-      setError("Geolocația nu este acceptată de browser.");
-      return;
-    }
-
     setLocStatus("Obținem locația...");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocStatus("Locație setată.");
-      },
-      () => {
-        setLocStatus("Eroare");
-        setError("Nu am putut obține geolocația.");
-      },
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
+
+    try {
+      const coords = await getAppLocation({
+        enableHighAccuracy: true,
+        timeout: 10000,
+      });
+
+      setLocation(coords);
+      setLocStatus("Locație setată.");
+    } catch (e) {
+      setLocStatus("Eroare");
+      setError(e?.message || "Nu am putut obține geolocația.");
+    }
   }
 
   async function onSubmit(e) {

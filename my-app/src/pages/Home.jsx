@@ -16,6 +16,7 @@ import { makeEventKeyFromAlert, hasCheckedIn, safetyCheckIn } from "../utils/saf
 import { getOrCreateThread } from "../utils/messages";
 import { distanceMeters } from "../utils/geo";
 import { markPulseResolved, leavePositiveFeedback } from "../services/trust";
+import { getAppLocation } from "../utils/location";
 
 function urgencyLabel(u) {
   if (u === 3) return "URGENT";
@@ -97,13 +98,24 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    let cancelled = false;
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
+    (async () => {
+      try {
+        const coords = await getAppLocation({
+          enableHighAccuracy: true,
+          timeout: 10000,
+        });
+
+        if (!cancelled) setMyPos(coords);
+      } catch {
+        // nu afișăm eroare aici, doar ignorăm
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
