@@ -8,6 +8,7 @@ import {
   updateDoc,
   doc,
   increment,
+  setDoc,
   getDoc,
   where,
   getDocs,
@@ -15,7 +16,6 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { pushNotification } from "./notifications";
-import { notifyMatchingUsers } from "./matching";
 
 export function subscribeToPulses(onData) {
   const q = query(
@@ -57,31 +57,7 @@ export async function createPulse({
     updatedAt: serverTimestamp(),
   });
 
-  const pulseId = ref.id;
-
-  const pulseData = {
-    id: pulseId,
-    type,
-    mode,
-    urgency,
-    title,
-    text,
-    location,
-    createdBy,
-    status: "open",
-    pinned: false,
-    verifiedInfo: false,
-    confirmationsCount: 0,
-    systemTag: systemTag || null,
-  };
-
-  try {
-    await notifyMatchingUsers(pulseData);
-  } catch (e) {
-    console.warn("Matching notification failed:", e);
-  }
-
-  return pulseId;
+  return ref.id;
 }
 
 export async function confirmPulse(pulseId, uid) {
@@ -126,7 +102,7 @@ export async function ensureSafetyCheckin({
   eventKey,
   location,
   createdBy = "system",
-  severeTitle = "Severe Weather",
+  severeTitle = "Alertă meteo severă",
 }) {
   const tag = `safety-checkin-${eventKey}`;
 
@@ -137,8 +113,8 @@ export async function ensureSafetyCheckin({
     type: "Emergency",
     mode: "need",
     urgency: 3,
-    title: "Safety Check-in",
-    text: `⚠️ ${severeTitle}. Scrie “Sunt OK” / “Am nevoie de ajutor” + detalii.`,
+    title: "Verificare de siguranță",
+    text: `⚠️ ${severeTitle}. Scrie „Sunt OK” / „Am nevoie de ajutor” + detalii.`,
     location,
     status: "open",
     pinned: true,
@@ -159,26 +135,4 @@ export async function ensureSafetyCheckin({
 
   const first = snap.docs[0];
   await updateDoc(doc(db, "pulses", first.id), payload);
-}
-
-export async function reportPulse({ pulseId, uid, reason }) {
-  if (!pulseId || !uid) return;
-
-  const reportRef = doc(db, "pulses", pulseId, "reports", uid);
-
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(reportRef);
-    if (snap.exists()) return;
-
-    tx.set(reportRef, {
-      uid,
-      reason: (reason || "").trim().slice(0, 300),
-      createdAt: serverTimestamp(),
-    });
-
-    tx.update(doc(db, "pulses", pulseId), {
-      reportsCount: increment(1),
-      updatedAt: serverTimestamp(),
-    });
-  });
 }
